@@ -4,7 +4,7 @@ use std::ops::Range;
 mod parser;
 mod lexer;
 mod result;
-mod structure;
+mod ast;
 
 #[derive(Debug,Clone)]
 pub enum ParseError<'a> {

@@ -43,10 +43,6 @@ mod tests {
     use crate::parser::ParseError;
     use crate::parser::parser::CypherParser;
     use crate::parser::result::ParseResult;
-    use crate::parser::structure::{Atom, CaseExpression, Expression, FilterExpression, FilterWith, InvocationName, KeyWord, ListComprehension, Literal, Name, Number, Parameter, Properties, RangeLit, RelationDetail, RelationshipPattern, RelationshipTypes, Selector, Symbol};
-    use crate::parser::structure::Expression::Null;
-    use crate::parser::structure::Number::Int;
-    use crate::parser::structure::Symbol::{COUNT, EscLit, Id};
 
 
     #[test]
