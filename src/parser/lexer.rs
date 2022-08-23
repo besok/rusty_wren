@@ -54,7 +54,7 @@ pub enum Token<'a> {
     TextBlock(&'a str),
 
     #[regex(r"-?(?&digit)", number)]
-    #[regex(r"-?(?&digit)(?&exp)", float)]
+    #[regex(r"-?(?&digit)(?&exp)", number)]
     #[regex(r"-?(?&digit)?\.(?&digit)(?&exp)?[fFdD]?", float)]
     #[regex(r"0[bB][01][01]*", binary)]
     #[regex(r"-?0x[0-9a-f](([0-9a-f]|[_])*[0-9a-f])?", hex)]
@@ -215,7 +215,6 @@ fn float<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Result<Number, String> {
 }
 
 fn binary<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Result<Number, String> {
-    println!("{}", lex.slice());
     isize::from_str_radix(&lex.slice()[2..], 2)
         .map(Number::Binary)
         .map_err(|s| s.to_string())
@@ -257,9 +256,9 @@ mod tests {
 
     #[test]
     fn number_test() {
+        test_match("1e1", vec![Digit(Float(10.0))]);
         test_match("-1", vec![Digit(Int(-1))]);
         test_match("1.1e1", vec![Digit(Float(11.0))]);
-        test_match("1e1", vec![Digit(Float(10.0))]);
         test_match("1 01 01 1e1 1e-1 0x1 1.1 1.0e1", vec![
             Digit(Int(1)),
             Digit(Int(1)),

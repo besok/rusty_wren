@@ -1,5 +1,4 @@
 use std::ops::Range;
-
 #[macro_use]
 mod parser;
 mod lexer;

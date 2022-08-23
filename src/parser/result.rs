@@ -137,6 +137,13 @@ impl<'a, T> ParseResult<'a, T> {
             other => other.map(|_| default),
         }
     }
+    pub fn then_or_def_val<Rhs:Default, Then>(self, then: Then ) -> ParseResult<'a, Rhs>
+        where Then: FnOnce(usize) -> ParseResult<'a, Rhs> {
+        match self {
+            Success(_, pos) => then(pos).or_default(Rhs::default()),
+            other => other.map(|_| Rhs::default()),
+        }
+    }
     pub fn then_or_none<Rhs, Then>(self, then: Then) -> ParseResult<'a, Option<Rhs>>
         where Then: FnOnce(usize) -> ParseResult<'a, Option<Rhs>> {
         self.then_or_default(then, None)
