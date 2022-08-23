@@ -1,11 +1,11 @@
 use std::ops::Range;
 
-use std::error::Error;
-use std::num::ParseIntError;
-use logos::Lexer;
-use logos::Logos;
 use crate::parser::ast::Number;
 use crate::parser::ParseError;
+use logos::Lexer;
+use logos::Logos;
+use std::error::Error;
+use std::num::ParseIntError;
 
 #[derive(Debug)]
 pub struct CypherLexer<'a> {
@@ -16,14 +16,14 @@ pub struct CypherLexer<'a> {
 impl<'a> CypherLexer<'a> {
     pub fn new(source: &'a str) -> Result<Self, ParseError> {
         let mut delegate = Token::lexer(source);
-        let mut tokens = vec!();
+        let mut tokens = vec![];
 
         while let Some(t) = delegate.next() {
             match t {
                 Token::Error => {
                     return Err(ParseError::BadToken(delegate.slice(), delegate.span()));
                 }
-                t => tokens.push(t)
+                t => tokens.push(t),
             }
         }
 
@@ -32,10 +32,12 @@ impl<'a> CypherLexer<'a> {
     pub fn token(&self, pos: usize) -> Result<(&Token<'a>, usize), ParseError<'a>> {
         match self.tokens.get(pos) {
             None => Err(ParseError::ReachedEOF(pos)),
-            Some(t) => Ok((t, pos))
+            Some(t) => Ok((t, pos)),
         }
     }
-    pub fn len(&self) -> usize { self.tokens.len() }
+    pub fn len(&self) -> usize {
+        self.tokens.len()
+    }
 }
 
 #[derive(Logos, Debug, Copy, Clone, PartialEq)]
@@ -60,7 +62,7 @@ pub enum Token<'a> {
     #[regex(r"-?0x[0-9a-f](([0-9a-f]|[_])*[0-9a-f])?", hex)]
     Digit(Number),
 
-    #[token("AS")]
+    #[token("as")]
     As,
     #[token("break")]
     Break,
@@ -207,11 +209,17 @@ pub enum Token<'a> {
 }
 
 fn number<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Result<Number, String> {
-    lex.slice().parse::<i64>().map(|r| Number::Int(r)).map_err(|s| s.to_string())
+    lex.slice()
+        .parse::<i64>()
+        .map(|r| Number::Int(r))
+        .map_err(|s| s.to_string())
 }
 
 fn float<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Result<Number, String> {
-    lex.slice().parse::<f64>().map(|r| Number::Float(r)).map_err(|s| s.to_string())
+    lex.slice()
+        .parse::<f64>()
+        .map(|r| Number::Float(r))
+        .map_err(|s| s.to_string())
 }
 
 fn binary<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Result<Number, String> {
@@ -229,65 +237,76 @@ fn hex<'a>(lex: &mut Lexer<'a, Token<'a>>) -> Result<Number, String> {
 #[cfg(test)]
 mod tests {
     use crate::parser::ast::Number::{Binary, Float, Hex, Int};
-    use crate::parser::lexer::{CypherLexer, Token};
     use crate::parser::lexer::Token::*;
+    use crate::parser::lexer::{CypherLexer, Token};
 
     fn test_match(src: &str, tokens: Vec<Token>) {
         match CypherLexer::new(src) {
             Ok(lexer) => assert_eq!(lexer.tokens, tokens),
-            Err(error) => panic!("{:?}", error)
+            Err(error) => panic!("{:?}", error),
         }
     }
 
     fn test_success(src: &str) {
         match CypherLexer::new(src) {
             Ok(lexer) => println!("{:?}", lexer.tokens),
-            Err(error) => panic!("{:?}", error)
+            Err(error) => panic!("{:?}", error),
         }
     }
 
     fn test_failed(src: &str) {
         match CypherLexer::new(src) {
             Ok(lexer) => panic!("{:?}", lexer.tokens),
-            Err(error) => println!("{:?}", error)
+            Err(error) => println!("{:?}", error),
         }
     }
-
 
     #[test]
     fn number_test() {
         test_match("1e1", vec![Digit(Float(10.0))]);
         test_match("-1", vec![Digit(Int(-1))]);
         test_match("1.1e1", vec![Digit(Float(11.0))]);
-        test_match("1 01 01 1e1 1e-1 0x1 1.1 1.0e1", vec![
-            Digit(Int(1)),
-            Digit(Int(1)),
-            Digit(Int(1)),
-            Digit(Float(10.0)),
-            Digit(Float(0.1)),
-            Digit(Hex(1)),
-            Digit(Float(1.1)),
-            Digit(Float(10.0)),
-        ]);
+        test_match(
+            "1 01 01 1e1 1e-1 0x1 1.1 1.0e1",
+            vec![
+                Digit(Int(1)),
+                Digit(Int(1)),
+                Digit(Int(1)),
+                Digit(Float(10.0)),
+                Digit(Float(0.1)),
+                Digit(Hex(1)),
+                Digit(Float(1.1)),
+                Digit(Float(10.0)),
+            ],
+        );
         test_match("0b1101", vec![Digit(Binary(13))]);
     }
 
     #[test]
     fn words_test() {
-        test_match("abc b ~ bca id_9_0", vec![Id("abc"), Id("b"), Tilde, Id("bca"), Id("id_9_0")]);
+        test_match(
+            "abc b ~ bca id_9_0",
+            vec![Id("abc"), Id("b"), Tilde, Id("bca"), Id("id_9_0")],
+        );
         test_match("\"text\"", vec![StringLit("\"text\"")]);
-        test_match(r#"
+        test_match(
+            r#"
             """ some text
             but in as a block
             """
-        "#, vec![TextBlock(r#"""" some text
+        "#,
+            vec![TextBlock(
+                r#"""" some text
             but in as a block
-            """"#)]);
+            """"#,
+            )],
+        );
     }
 
     #[test]
     fn common_test() {
-        test_success(r#"
+        test_success(
+            r#"
         // Ported from the Python version.
 
 class Tree {
@@ -348,6 +367,7 @@ for (i in 1...1000) System.gc()
 
 System.print("elapsed: %(System.clock - start)")
 
-        "#)
+        "#,
+        )
     }
 }

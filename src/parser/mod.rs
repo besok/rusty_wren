@@ -1,11 +1,11 @@
 use std::ops::Range;
 #[macro_use]
 mod parser;
+mod ast;
 mod lexer;
 mod result;
-mod ast;
 
-#[derive(Debug,Clone)]
+#[derive(Debug, Clone)]
 pub enum ParseError<'a> {
     BadToken(&'a str, Range<usize>),
     FailedOnValidation(&'a str, usize),

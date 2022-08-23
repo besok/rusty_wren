@@ -1,13 +1,16 @@
+use crate::parser::ast::{
+    AtomExpression, Block, BlockOrEnum, Call, Elvis, EmptyToken, Enumeration, Expression, Function,
+    Id, ImportModule, ImportVariable, Number, Params, Range, RangeExpression, Statement,
+};
+use crate::parser::lexer::{CypherLexer, Token};
+use crate::parser::result::ParseResult;
+use crate::parser::result::ParseResult::Success;
+use crate::parser::ParseError;
+use crate::parser::ParseError::UnreachedEOF;
+use crate::token;
 use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::iter::Map;
-use crate::parser::ast::{AtomExpression, Elvis, Expression, Id, Number, EmptyToken, Enumeration, Params, Statement, Block, Call, BlockOrEnum};
-use crate::parser::lexer::{CypherLexer, Token};
-use crate::parser::ParseError;
-use crate::parser::ParseError::UnreachedEOF;
-use crate::parser::result::ParseResult;
-use crate::parser::result::ParseResult::Success;
-use crate::token;
 
 struct CypherParser<'a> {
     lexer: CypherLexer<'a>,
@@ -15,16 +18,18 @@ struct CypherParser<'a> {
 
 impl<'a> CypherParser<'a> {
     pub fn new(src: &'a str) -> Result<Self, ParseError> {
-        Ok(CypherParser { lexer: CypherLexer::new(src)? })
+        Ok(CypherParser {
+            lexer: CypherLexer::new(src)?,
+        })
     }
     pub fn token(&self, pos: usize) -> Result<(&Token<'a>, usize), ParseError<'a>> {
         self.lexer.token(pos)
     }
     pub fn one_or_more<T, Then>(&self, pos: usize, then: Then) -> ParseResult<'a, Vec<T>>
-        where Then: FnOnce(usize) -> ParseResult<'a, T> + Copy {
-        then(pos)
-            .then_multi_zip(|p| then(p))
-            .merge()
+    where
+        Then: FnOnce(usize) -> ParseResult<'a, T> + Copy,
+    {
+        then(pos).then_multi_zip(|p| then(p)).merge()
     }
 
     pub fn validate_eof<T>(&self, res: ParseResult<'a, T>) -> ParseResult<'a, T> {
@@ -60,28 +65,30 @@ impl<'a> CypherParser<'a> {
             Token::CharLit(v) => AtomExpression::CharLit(v)
         )
     }
-    fn string(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
+    fn string(&self, pos: usize) -> ParseResult<'a, &'a str> {
         token!(self.token(pos) =>
-            Token::StringLit(v) => AtomExpression::StringLit(v),
-            Token::TextBlock(v) => AtomExpression::StringLit(v)
+            Token::StringLit(v) => *v,
+            Token::TextBlock(v) => *v
         )
     }
     fn number_expr(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
         self.number(pos).map(AtomExpression::Number)
     }
 
-
     fn map_init(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
-        let one_pair = |p| self.expression(p)
-            .then_zip(|p| token!(self.token(p) => Token::Colon))
-            .take_left()
-            .then_zip(|p| self.expression(p));
+        let one_pair = |p| {
+            self.expression(p)
+                .then_zip(|p| token!(self.token(p) => Token::Colon))
+                .take_left()
+                .then_zip(|p| self.expression(p))
+        };
 
-        let all_pairs = |p|
+        let all_pairs = |p| {
             one_pair(p)
                 .then_multi_zip(|p| token!(self.token(p) => Token::Comma).then(one_pair))
                 .merge()
-                .or_default(vec![]);
+                .or_val(vec![])
+        };
 
         token!(self.token(pos) => Token::LBrace)
             .then(all_pairs)
@@ -89,12 +96,11 @@ impl<'a> CypherParser<'a> {
             .take_left()
             .map(AtomExpression::MapInit)
     }
-    fn list_init(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
+    fn list_init(&self, pos: usize) -> ParseResult<'a, Enumeration<'a>> {
         token!(self.token(pos) => Token::LBrack)
-            .then(|p| self.enumeration(p).or_default(Enumeration::default()))
+            .then_or_default(|p| self.enumeration(p))
             .then_zip(|p| token!(self.token(p) => Token::RBrack))
             .take_left()
-            .map(AtomExpression::ListInit)
     }
 
     fn elvis(&self, pos: usize) -> ParseResult<'a, Elvis<'a>> {
@@ -107,15 +113,11 @@ impl<'a> CypherParser<'a> {
     }
 
     fn expression(&self, pos: usize) -> ParseResult<'a, Expression<'a>> {
-        token!(self.token(pos) =>
-            Token::RShift => Expression::E
-        )
+        token!(self.token(pos) =>Token::RShift => Expression::E)
     }
 
     fn enumeration(&self, pos: usize) -> ParseResult<'a, Enumeration<'a>> {
-        let tail = |p|
-            token!(self.token(p) => Token::Comma)
-                .then(|p| self.expression(p));
+        let tail = |p| token!(self.token(p) => Token::Comma).then(|p| self.expression(p));
 
         self.expression(pos)
             .then_multi_zip(tail)
@@ -127,15 +129,15 @@ impl<'a> CypherParser<'a> {
         self.expression(pos).map(Statement::Expression)
     }
     fn block(&self, pos: usize) -> ParseResult<'a, Block<'a>> {
-        let params = |p|
+        let params = |p| {
             token!(self.token(p) => Token::BitOr)
                 .then(|p| self.params(p))
                 .then_zip(|p| token!(self.token(p) => Token::BitOr))
-                .take_left();
-
+                .take_left()
+        };
 
         token!(self.token(pos) => Token::LBrace)
-            .then_or_default(params, Params::default())
+            .then_or_default(params)
             .then_multi_zip(|p| self.statement(p))
             .map(|(params, statements)| Block { params, statements })
             .then_zip(|p| token!(self.token(p) => Token::RBrace))
@@ -143,62 +145,177 @@ impl<'a> CypherParser<'a> {
     }
     fn params(&self, pos: usize) -> ParseResult<'a, Params<'a>> {
         self.id(pos)
-            .then_multi_zip(|p|
-                token!(self.token(p) => Token::Comma)
-                    .then(|p| self.id(p)))
+            .then_multi_zip(|p| token!(self.token(p) => Token::Comma).then(|p| self.id(p)))
             .merge()
             .map(|ids| Params { ids })
     }
 
     fn call(&self, pos: usize) -> ParseResult<'a, Call<'a>> {
-        let enumeration = |p|
+        let enumeration = |p| {
             token!(self.token(p) => Token::LParen)
-                .then_or_def_val(|p| self.enumeration(p))
+                .then_or_default(|p| self.enumeration(p))
                 .then_zip(|p| token!(self.token(p) => Token::RParen))
                 .take_left()
-                .map(BlockOrEnum::Enum);
+                .map(BlockOrEnum::Enum)
+        };
 
-        let block_or_enum = |p|
-            self.block(p).map(BlockOrEnum::Block).or(enumeration);
+        let block_or_enum = |p| self.block(p).map(BlockOrEnum::Block).or(enumeration);
 
-        let tail = |p|
-            token!(self.token(p) => Token::Dot).then(|p| self.call(p)).or_none();
+        let tail = |p| {
+            token!(self.token(p) => Token::Dot)
+                .then(|p| self.call(p))
+                .or_none()
+        };
 
         self.id(pos)
-            .then_or_default_zip(block_or_enum, BlockOrEnum::None)
+            .then_or_val_zip(block_or_enum, BlockOrEnum::None)
             .then_or_none_zip(tail)
-            .map(|((id, middle), tail)|
-                Call { id, tail: tail.map(Box::new), middle }
+            .map(|((id, middle), tail)| Call {
+                id,
+                tail: tail.map(Box::new),
+                middle,
+            })
+    }
+
+    fn collection_elem(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
+        self.string(pos)
+            .map(Call::just_id)
+            .or(|p| self.call(p))
+            .then_zip(|p| self.list_init(p))
+            .map(|(call, enumeration)| AtomExpression::CollectionElem(call, enumeration))
+    }
+
+    fn import_variable(&self, pos: usize) -> ParseResult<'a, ImportVariable<'a>> {
+        let alias = |p| token!(self.token(p) => Token::As).then_or_none(|p| self.id(p).or_none());
+
+        self.id(pos)
+            .then_or_none_zip(alias)
+            .map(|(name, alias)| ImportVariable { name, alias })
+    }
+    fn import_module(&self, pos: usize) -> ParseResult<'a, ImportModule<'a>> {
+        let import_vars = |p| {
+            token!(self.token(p) => Token::For)
+                .then(|p| self.import_variable(p))
+                .then_multi_zip(|p| {
+                    token!(self.token(p) => Token::Comma).then(|p| self.import_variable(p))
+                })
+                .merge()
+        };
+
+        token!(self.token(pos) => Token::Import)
+            .then(|p| self.string(p))
+            .then_or_val_zip(import_vars, vec![])
+            .map(|(name, variables)| ImportModule { name, variables })
+    }
+
+    fn range(&self, pos: usize) -> ParseResult<'a, Range<'a>> {
+        let range_expr = |p| {
+            self.call(p)
+                .map(RangeExpression::Call)
+                .or(|p| self.number(p).map(RangeExpression::Num))
+        };
+        let ellipsis = |p| {
+            token!(self.token(p) =>
+                Token::EllipsisIn => false,
+                Token::EllipsisOut => true
             )
+        };
+        let to_range = |((left, is_out), right)| Range {
+            left,
+            right,
+            is_out,
+        };
+
+        range_expr(pos)
+            .then_zip(ellipsis)
+            .then_zip(range_expr)
+            .map(to_range)
+    }
+
+    fn atom(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
+        let with_sub = |p| {
+            token!(self.token(p) => Token::Sub)
+                .then(|p| self.atom(p))
+                .map(Box::new)
+                .map(AtomExpression::Sub)
+        };
+        self.bool(pos)
+            .or(|p| self.char(p))
+            .or(|p| self.string(p).map(AtomExpression::StringLit))
+            .or(|p| self.number(p).map(AtomExpression::Number))
+            .or(|p| self.null(p))
+            .or(|p| self.list_init(p).map(AtomExpression::ListInit))
+            .or(|p| self.map_init(p))
+            .or(|p| self.call(p).map(AtomExpression::Call))
+            .or(|p| self.range(p).map(AtomExpression::Range))
+            .or(|p| self.collection_elem(p))
+            .or(|p| token!(self.token(p) => Token::Break => AtomExpression::Break))
+            .or(|p| token!(self.token(p) => Token::Continue => AtomExpression::Continue))
+            .or(|p| self.import_module(p).map(AtomExpression::ImportModule))
+            .or(with_sub)
+    }
+
+    fn function(&self, pos: usize) -> ParseResult<'a, Function<'a>> {
+        let params = |p| {
+            token!(self.token(p) => Token::LParen)
+                .then_or_default(|p| self.params(p))
+                .then_zip(|p| token!(self.token(p) => Token::RParen))
+                .take_left()
+        };
+
+        let to_fn = |((name, params), block)| Function {
+            name,
+            params,
+            block,
+        };
+        self.id(pos)
+            .then_zip(params)
+            .then_or_none_zip(|p| self.block(p).or_none())
+            .map(to_fn)
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-    use std::fmt::Debug;
     use crate::parser::ast::{AtomExpression, Enumeration, Expression};
-    use crate::parser::ParseError;
     use crate::parser::parser::CypherParser;
     use crate::parser::result::ParseResult;
-
+    use crate::parser::ParseError;
+    use std::collections::HashMap;
+    use std::fmt::Debug;
 
     #[test]
     fn null_test() {
-        expect(
-            parser("null").null(0),
-            AtomExpression::Null,
-        );
+        expect(parser("null").null(0), AtomExpression::Null);
         fail(parser("not_null").null(0));
 
         expect_pos(parser("? >> : >>").elvis(0), 4);
     }
 
     #[test]
+    fn range_test() {
+        expect_pos(parser("1..2").range(0), 3);
+        expect_pos(parser("1...2").range(0), 3);
+        expect_pos(parser("a.b.c...a{}").range(0), 9);
+    }
+    #[test]
+    fn atom_test() {
+        expect_pos(parser("a.b.c").atom(0), 5);
+        expect_pos(parser("-a.b.c").atom(0), 6);
+    }
+    #[test]
     fn enum_test() {
         expect_pos(parser(">>").enumeration(0), 1);
         expect_pos(parser(">>, >>").enumeration(0), 3);
+    }
+    #[test]
+    fn import_mod_test() {
+        expect_pos(parser("a as b").import_variable(0), 3);
+        expect_pos(parser("import \"abc\" ").import_module(0), 2);
+        expect_pos(
+            parser("import \"abc\" for a as b, b as d").import_module(0),
+            10,
+        );
     }
 
     #[test]
@@ -211,9 +328,9 @@ mod tests {
         expect_pos(parser("id(>>,>>).id").call(0), 8);
         expect_pos(parser("id{}.id").call(0), 5);
         expect_pos(parser("id{ >> }.id").call(0), 6);
-        expect_pos(parser("id{|a| >> }.id").call(0),9 );
-        expect_pos(parser("id{|a,b| >> }.id").call(0),11 );
-        expect_pos(parser("id{|a,b| >> }.id().id").call(0),15 );
+        expect_pos(parser("id{|a| >> }.id").call(0), 9);
+        expect_pos(parser("id{|a,b| >> }.id").call(0), 11);
+        expect_pos(parser("id{|a,b| >> }.id().id").call(0), 15);
     }
 
     #[test]
@@ -238,11 +355,10 @@ mod tests {
         expect_pos(parser("[>> , >>]").list_init(0), 5);
     }
 
-
     fn parser(src: &str) -> CypherParser {
         match CypherParser::new(src) {
             Ok(p) => p,
-            Err(e) => panic!("{:?}", e)
+            Err(e) => panic!("{:?}", e),
         }
     }
 
@@ -250,43 +366,54 @@ mod tests {
         match res {
             ParseResult::Success(_, _) => {}
             ParseResult::Fail(pos) => panic!("failed on {}", pos),
-            ParseResult::Error(e) => panic!("error: {:?}", e)
+            ParseResult::Error(e) => panic!("error: {:?}", e),
         }
     }
 
-    fn expect<T>(res: ParseResult<T>, expect: T) where T: PartialEq + Debug {
+    fn expect<T>(res: ParseResult<T>, expect: T)
+    where
+        T: PartialEq + Debug,
+    {
         match res {
             ParseResult::Success(v, _) => assert_eq!(v, expect),
             ParseResult::Fail(pos) => panic!("failed on {}", pos),
-            ParseResult::Error(e) => panic!("error: {:?}", e)
+            ParseResult::Error(e) => panic!("error: {:?}", e),
         }
     }
 
-    fn expect_pos<T>(res: ParseResult<T>, expect: usize) where T: PartialEq + Debug {
+    fn expect_pos<T>(res: ParseResult<T>, expect: usize)
+    where
+        T: PartialEq + Debug,
+    {
         match res {
             ParseResult::Success(v, pos) => {
                 println!("{:?}", v);
                 assert_eq!(pos, expect, "actual:{:?}, expect:{:?}", pos, expect)
             }
             ParseResult::Fail(pos) => panic!("failed on {}", pos),
-            ParseResult::Error(e) => panic!("error: {:?}", e)
+            ParseResult::Error(e) => panic!("error: {:?}", e),
         }
     }
 
     fn fail<T: Debug>(res: ParseResult<T>) {
         match res {
-            ParseResult::Success(v, pos) => panic!(" expect to get  fail but got {:?} on pos {pos}", v),
+            ParseResult::Success(v, pos) => {
+                panic!(" expect to get  fail but got {:?} on pos {pos}", v)
+            }
             ParseResult::Fail(pos) => {}
-            ParseResult::Error(e) => panic!("error: {:?}", e)
+            ParseResult::Error(e) => panic!("error: {:?}", e),
         }
     }
 
     fn fail_on<T: Debug>(res: ParseResult<T>, expect: usize) {
         match res {
-            ParseResult::Success(v, pos) => panic!(" expect to get  fail but got {:?} on pos {pos}", v),
-            ParseResult::Fail(pos) => assert_eq!(pos, expect, "actual:{:?}, expect:{:?}", pos, expect),
-            ParseResult::Error(e) => panic!("error: {:?}", e)
+            ParseResult::Success(v, pos) => {
+                panic!(" expect to get  fail but got {:?} on pos {pos}", v)
+            }
+            ParseResult::Fail(pos) => {
+                assert_eq!(pos, expect, "actual:{:?}, expect:{:?}", pos, expect)
+            }
+            ParseResult::Error(e) => panic!("error: {:?}", e),
         }
     }
 }
-
