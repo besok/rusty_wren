@@ -1,6 +1,7 @@
 use crate::parser::ast::{
-    AtomExpression, Block, BlockOrEnum, Call, Elvis, EmptyToken, Enumeration, Expression, Function,
-    Id, ImportModule, ImportVariable, Number, Params, Range, RangeExpression, Statement,
+    AtomExpression, Block, BlockOrEnum, Call, Elvis, EmptyToken, Enumeration,
+    Expression, Function, Id, ImportModule, ImportVariable, Logic, LogicOp, Number,
+    Params, Range, RangeExpression, Statement,
 };
 use crate::parser::lexer::{CypherLexer, Token};
 use crate::parser::result::ParseResult;
@@ -273,6 +274,41 @@ impl<'a> CypherParser<'a> {
             .then_or_none_zip(|p| self.block(p).or_none())
             .map(to_fn)
     }
+
+    fn logic_atom(&self, pos: usize) -> ParseResult<'a, Logic<'a>> {
+        token!(self.token(pos) =>
+            Token::Or => LogicOp::Or,
+            Token::Gt => LogicOp::Gt,
+            Token::Ge => LogicOp::Ge,
+            Token::Equal => LogicOp::Eq,
+            Token::NotEqual => LogicOp::NotEq,
+            Token::Lt => LogicOp::Lt,
+            Token::Le => LogicOp::Le,
+            Token::And => LogicOp::And
+        )
+        .then_zip(|p| self.expression(p))
+        .map(|(op, value)| Logic::Atom(op, value))
+    }
+    fn logic(&self, pos: usize) -> ParseResult<'a, Logic<'a>> {
+        let and = |p| {
+            self.logic_atom(p)
+                .then_multi_zip(|p| {
+                    token!(self.token(p) => Token::And)
+                        .then(|p| self.expression(p))
+                        .then_zip(|p| self.logic_atom(p))
+                        .map(|(e, l)| (e, Box::new(l)))
+                })
+                .map(|(l, tail)| Logic::And(Box::new(l), tail))
+        };
+        and(pos)
+            .then_multi_zip(|p| {
+                token!(self.token(p) => Token::Or)
+                    .then(|p| self.expression(p))
+                    .then_zip(and)
+                    .map(|(e, l)| (e, Box::new(l)))
+            })
+            .map(|(l, tail)| Logic::Or(Box::new(l), tail))
+    }
 }
 
 #[cfg(test)]
@@ -290,6 +326,22 @@ mod tests {
         fail(parser("not_null").null(0));
 
         expect_pos(parser("? >> : >>").elvis(0), 4);
+    }
+    #[test]
+    fn atom_logic_test() {
+        expect_pos(parser("|| >>").logic_atom(0), 2);
+        expect_pos(parser("&& >>").logic_atom(0), 2);
+        expect_pos(parser("< >>").logic_atom(0), 2);
+        expect_pos(parser("== >>").logic_atom(0), 2);
+        expect_pos(parser("!= >>").logic_atom(0), 2);
+    }
+    #[test]
+    fn logic_test() {
+        expect_pos(parser("> >> ").logic(0), 2);
+        expect_pos(parser("> >> && >> > >>").logic(0), 6);
+        expect_pos(parser("> >> || >> > >> && >> > >>").logic(0), 10);
+        expect_pos(parser("> >> || >> && >>").logic(0), 6);
+        expect_pos(parser("|| >> && >> && >>").logic(0), 6);
     }
 
     #[test]

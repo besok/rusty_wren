@@ -122,7 +122,7 @@ pub struct ImportModule<'a> {
 pub struct Function<'a> {
     pub name: Id<'a>,
     pub params: Params<'a>,
-    pub block:Option<Block<'a>>
+    pub block: Option<Block<'a>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -135,4 +135,29 @@ pub struct Range<'a> {
     pub left: RangeExpression<'a>,
     pub right: RangeExpression<'a>,
     pub is_out: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LogicOp {
+    Gt,
+    Lt,
+    Eq,
+    Le,
+    Ge,
+    NotEq,
+    Or,
+    And
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct  AtomLogic<'a> {
+    pub op: LogicOp,
+    pub value: Expression<'a>
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Logic<'a> {
+    Atom(LogicOp,Expression<'a>),
+    And(Box<Logic<'a>>,Vec<(Expression<'a>,Box<Logic<'a>>)>),
+    Or(Box<Logic<'a>>,Vec<(Expression<'a>,Box<Logic<'a>>)>),
 }
