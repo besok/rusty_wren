@@ -1,6 +1,6 @@
 use crate::parser::ast::{
-    AtomExpression, Block, BlockOrEnum, Call, Elvis, EmptyToken, Enumeration,
-    Expression, Function, Id, ImportModule, ImportVariable, Logic, LogicOp, Number,
+    Arithmetic, AtomExpression, BitSign, Block, BlockOrEnum, Call, Elvis, EmptyToken, Enumeration,
+    Expression, Function, Id, ImportModule, ImportVariable, Logic, LogicOp, MulSign, Number,
     Params, Range, RangeExpression, Statement,
 };
 use crate::parser::lexer::{CypherLexer, Token};
@@ -298,7 +298,13 @@ impl<'a> CypherParser<'a> {
                         .then_zip(|p| self.logic_atom(p))
                         .map(|(e, l)| (e, Box::new(l)))
                 })
-                .map(|(l, tail)| Logic::And(Box::new(l), tail))
+                .map(|(l, tail)| {
+                    if tail.is_empty() {
+                        l
+                    } else {
+                        Logic::And(Box::new(l), tail)
+                    }
+                })
         };
         and(pos)
             .then_multi_zip(|p| {
@@ -307,7 +313,63 @@ impl<'a> CypherParser<'a> {
                     .then_zip(and)
                     .map(|(e, l)| (e, Box::new(l)))
             })
-            .map(|(l, tail)| Logic::Or(Box::new(l), tail))
+            .map(|(l, tail)| {
+                if tail.is_empty() {
+                    l
+                } else {
+                    Logic::Or(Box::new(l), tail)
+                }
+            })
+    }
+    fn arith(&self, pos: usize) -> ParseResult<'a, Arithmetic<'a>> {
+        let mul = |p| {
+            token!(self.token(p) =>
+                        Token::Mult => MulSign::Mul,
+                        Token::Div => MulSign::Div,
+                        Token::Mod => MulSign::Mod
+            )
+            .then_zip(|p| self.expression(p))
+            .map(|(s, e)| Arithmetic::Mul(s, e))
+        };
+        let add = |p| {
+            token!(self.token(p) =>
+                        Token::Sub => false,
+                        Token::Add => true
+            )
+            .then_zip(|p| mul(p).or(|p| self.expression(p).map(Arithmetic::Expression)))
+            .map(|(s, e)| Arithmetic::Add(s, Box::new(e)))
+        };
+        let range = |p| {
+            token!(self.token(p) =>
+                        Token::EllipsisIn => false,
+                        Token::EllipsisOut => true
+            )
+            .then_zip(|p| add(p).or(|p| self.expression(p).map(Arithmetic::Expression)))
+            .map(|(s, e)| Arithmetic::Range(s, Box::new(e)))
+        };
+        let shift = |p| {
+            token!(self.token(p) =>
+                        Token::LShift => false,
+                        Token::RShift => true
+            )
+            .then_zip(|p| range(p).or(|p| self.expression(p).map(Arithmetic::Expression)))
+            .map(|(s, e)| Arithmetic::Shift(s, Box::new(e)))
+        };
+        let bit = |p| {
+            token!(self.token(p) =>
+                        Token::BitOr => BitSign::Or,
+                        Token::BitAnd => BitSign::And,
+                        Token::Caret => BitSign::Xor
+            )
+            .then_zip(|p| shift(p).or(|p| self.expression(p).map(Arithmetic::Expression)))
+            .map(|(s, e)| Arithmetic::Bit(s, Box::new(e)))
+        };
+
+        mul(pos)
+            .or(add)
+            .or(range)
+            .or(shift)
+            .or(bit)
     }
 }
 
@@ -334,6 +396,16 @@ mod tests {
         expect_pos(parser("< >>").logic_atom(0), 2);
         expect_pos(parser("== >>").logic_atom(0), 2);
         expect_pos(parser("!= >>").logic_atom(0), 2);
+    }
+    #[test]
+    fn arith_test() {
+        expect_pos(parser("* >>").arith(0), 2);
+        expect_pos(parser("/ >>").arith(0), 2);
+        expect_pos(parser("+ >>").arith(0), 2);
+        expect_pos(parser(".. >>").arith(0), 2);
+        expect_pos(parser(">> >>").arith(0), 2);
+        // expect_pos(parser("| >>").arith(0), 2);
+        expect_pos(parser("- * >>").arith(0), 3);
     }
     #[test]
     fn logic_test() {
