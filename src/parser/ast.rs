@@ -76,10 +76,10 @@ pub enum Expression<'a> {
 pub enum Statement<'a> {
     Expression(Expression<'a>),
     Assignment(Assignment<'a>),
-    AssignmentNull(AssignmentNull<'a>),
-    If(If<'a>),
-    While(While<'a>),
-    For(For<'a>),
+    AssignmentNull(AssignmentNull),
+    If(Box<If<'a>>),
+    While(Box<While<'a>>),
+    For(Box<For<'a>>),
     Block(Block<'a>),
     Return(Expression<'a>),
 }
@@ -251,7 +251,7 @@ pub enum ClassBodyType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ClassBody<'a> {
+pub struct ClassUnit<'a> {
     pub attributes: Vec<Attribute<'a>>,
     pub tpe: ClassBodyType,
     pub statement: ClassStatement<'a>,
@@ -263,7 +263,7 @@ pub struct ClassDefinition<'a> {
     pub foreign: bool,
     pub name: Id<'a>,
     pub inherit: Id<'a>,
-    pub elems: Vec<ClassBody<'a>>,
+    pub elems: Vec<ClassUnit<'a>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -289,7 +289,7 @@ pub struct Assignment<'a> {
     pub rhs: Box<Rhs<'a>>,
 }
 #[derive(Debug, Clone, PartialEq)]
-pub struct AssignmentNull<'a> {
+pub struct AssignmentNull {
     pub var: bool,
     pub op: AssignOp,
 }

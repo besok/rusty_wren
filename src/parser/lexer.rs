@@ -145,7 +145,8 @@ pub enum Token<'a> {
     BitAnd,
     #[token("|")]
     BitOr,
-
+    #[token("!")]
+    Bang,
     #[token("?")]
     Question,
     #[token("#")]

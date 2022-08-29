@@ -1,13 +1,15 @@
 use crate::parser::ast::{
-    Arithmetic, AtomExpression, BitSign, Block, BlockOrEnum, Call, Elvis, EmptyToken, Enumeration,
-    Expression, Function, Id, ImportModule, ImportVariable, Logic, LogicOp, MulSign, Number,
-    Params, Range, RangeExpression, Statement,
+    Arithmetic, AtomExpression, Attribute, AttributeValue, BitSign, Block, BlockOrEnum, Call,
+    ClassStatement, ClassUnit, Elvis, EmptyToken, Enumeration, Expression, Function, GetterLabel,
+    Id, ImportModule, ImportVariable, Logic, LogicOp, MulSign, Number, Params, Range,
+    RangeExpression, SetterLabel, Statement,
 };
+use crate::parser::lexer::Token::Class;
 use crate::parser::lexer::{CypherLexer, Token};
 use crate::parser::result::ParseResult;
-use crate::parser::result::ParseResult::Success;
+use crate::parser::result::ParseResult::{Error, Fail, Success};
 use crate::parser::ParseError;
-use crate::parser::ParseError::UnreachedEOF;
+use crate::parser::ParseError::{ReachedEOF, UnreachedEOF};
 use crate::token;
 use std::borrow::Borrow;
 use std::collections::HashMap;
@@ -250,7 +252,7 @@ impl<'a> CypherParser<'a> {
             .or(|p| self.call(p).map(AtomExpression::Call))
             .or(|p| self.range(p).map(AtomExpression::Range))
             .or(|p| self.collection_elem(p))
-            .or(|p| token!(self.token(p) => Token::Break => AtomExpression::Break))
+            .or(|p| token!(self.token(p) => Token::Break => AtomExpression::Break),)
             .or(|p| token!(self.token(p) => Token::Continue => AtomExpression::Continue))
             .or(|p| self.import_module(p).map(AtomExpression::ImportModule))
             .or(with_sub)
@@ -371,6 +373,134 @@ impl<'a> CypherParser<'a> {
             .or(shift)
             .or(bit)
     }
+    fn class_statement(&self, pos: usize) -> ParseResult<'a, ClassStatement<'a>> {
+        let op_getter = |p| {
+            token!(self.token(p) =>
+                Token::Sub => GetterLabel::Sub,
+                Token::Tilde => GetterLabel::Tilde,
+                Token::Bang => GetterLabel::Bang)
+            .or(|p| self.id(p).map(GetterLabel::Id))
+            .then_or_none_zip(|p| self.block(p).or_none())
+            .map(|(g, b)| ClassStatement::OpGetter(g, b))
+        };
+        let setter = |p| {
+            self.id(p)
+                .then_zip(|p| {
+                    token!(self.token(p) => Token::Assign)
+                        .then(|p| self.one_arg(p))
+                        .then_zip(|p| self.block(p))
+                })
+                .map(|(l, (r, b))| ClassStatement::Setter(l, r, b))
+        };
+        let subscript_get = |p| {
+            token!(self.token(p) => Token::LParen)
+                .then(|p| self.enumeration(p))
+                .then_zip(|p| token!(self.token(p) => Token::RParen))
+                .take_left()
+                .then_zip(|p| self.block(p))
+                .map(|(e, b)| ClassStatement::SubscriptGet(e, b))
+        };
+        let subscript_set = |p| {
+            token!(self.token(p) => Token::LParen)
+                .then(|p| self.enumeration(p))
+                .then_zip(|p| token!(self.token(p) => Token::RParen))
+                .take_left()
+                .then_zip(|p| token!(self.token(p) => Token::Assign).then(|p| self.one_arg(p)))
+                .then_zip(|p| self.block(p))
+                .map(|((e, id), b)| ClassStatement::SubscriptSet(e, id, b))
+        };
+        let op_setter = |p| {
+            token!(self.token(p) =>
+                    Token::Sub => SetterLabel::Sub,
+                    Token::Mult => SetterLabel::Mul,
+                    Token::Div => SetterLabel::Div,
+                    Token::Mod => SetterLabel::Mod,
+                    Token::Add => SetterLabel::Add,
+                    Token::EllipsisIn => SetterLabel::EllipsisIn,
+                    Token::EllipsisOut => SetterLabel::EllipsisOut,
+                    Token::LShift => SetterLabel::LShift,
+                    Token::BitAnd => SetterLabel::BitAnd,
+                    Token::Caret => SetterLabel::BitXor,
+                    Token::BitOr => SetterLabel::BitOr,
+                    Token::Gt => SetterLabel::Gt,
+                    Token::Lt => SetterLabel::Lt,
+                    Token::Equal => SetterLabel::Eq,
+                    Token::Le => SetterLabel::Le,
+                    Token::Ge => SetterLabel::Ge,
+                    Token::NotEqual => SetterLabel::NotEq,
+                    Token::Is => SetterLabel::Is)
+            .then_zip(|p| self.one_arg(p))
+            .then_zip(|p| self.block(p))
+            .map(|((l, id), b)| ClassStatement::OpSetter(l, id, b))
+        };
+        let constructor = |p| {
+            token!(self.token(p) => Token::Construct)
+                .then(|p| self.id(p))
+                .then_zip(|p| self.params(p))
+                .then_zip(|p| self.block(p))
+                .map(|((id, ps), b)| ClassStatement::Constructor(id, ps, b))
+        };
+
+        self.function(pos).map(ClassStatement::Fn)
+            .alts(pos)
+            .or(op_getter)
+            .or(op_setter)
+            .or(setter)
+            .or(subscript_get)
+            .or(subscript_set)
+            .or(constructor)
+            .get()
+    }
+    // fn class_body(&self, pos: usize) -> ParseResult<'a, ClassUnit<'a>> {
+    //
+    //
+    // }
+
+    fn attribute(&self, pos: usize) -> ParseResult<'a, Attribute<'a>> {
+        let prefix = |p| {
+            token!(self.token(p) => Token::Hash)
+                .then_or_val(|p| token!(self.token(p) => Token::Bang => true), false)
+        };
+
+        let attr_val = |p| {
+            self.id(p)
+                .then_or_none_zip(|p| {
+                    token!(self.token(p) => Token::Assign)
+                        .then(|p| self.atom(p))
+                        .or_none()
+                })
+                .map(|(id, expr)| AttributeValue { id, expr })
+        };
+
+        let simple = |p| {
+            prefix(p)
+                .then_zip(attr_val)
+                .map(|(b, v)| Attribute::Simple(b, v))
+        };
+
+        let group = |p| {
+            prefix(p)
+                .then_zip(|p| self.id(p))
+                .then_zip(|p| {
+                    token!(self.token(p) => Token::LParen)
+                        .then(attr_val)
+                        .then_multi_zip(|p| token!(self.token(p) => Token::Comma).then(attr_val))
+                        .merge()
+                })
+                .then_zip(|p| token!(self.token(p) => Token::RParen))
+                .take_left()
+                .map(|((b, id), attrs)| Attribute::Group(b, id, attrs))
+        };
+
+        group(pos).alts(pos).or(simple).get()
+    }
+
+    fn one_arg(&self, pos: usize) -> ParseResult<'a, Id<'a>> {
+        token!(self.token(pos) => Token::LParen)
+            .then(|p| self.id(p))
+            .then_zip(|p| token!(self.token(p) => Token::RParen))
+            .take_left()
+    }
 }
 
 #[cfg(test)]
@@ -396,6 +526,10 @@ mod tests {
         expect_pos(parser("< >>").logic_atom(0), 2);
         expect_pos(parser("== >>").logic_atom(0), 2);
         expect_pos(parser("!= >>").logic_atom(0), 2);
+    }
+    #[test]
+    fn attrs_test() {
+        expect_pos(parser("# id").attribute(0), 2);
     }
     #[test]
     fn arith_test() {

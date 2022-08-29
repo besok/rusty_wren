@@ -45,11 +45,7 @@ impl<'a, T> ParseResult<'a, T> {
     {
         self.then_combine(then, |a, b| (a, b))
     }
-    pub fn then_or_val_zip<Res, Then>(
-        self,
-        then: Then,
-        default: Res,
-    ) -> ParseResult<'a, (T, Res)>
+    pub fn then_or_val_zip<Res, Then>(self, then: Then, default: Res) -> ParseResult<'a, (T, Res)>
     where
         Then: FnOnce(usize) -> ParseResult<'a, Res>,
     {
@@ -263,9 +259,50 @@ impl<'a, T> ParseResult<'a, T> {
     {
         match self {
             Fail(pos) => next(pos),
+            Error(ReachedEOF(pos)) => next(pos),
             other => other,
         }
     }
+
+    pub fn alts(self, pos: usize) -> Alt<'a, T> {
+        Alt {
+            init_pos: pos,
+            current: self,
+        }
+    }
+}
+
+pub struct Alt<'a, T> {
+    init_pos: usize,
+    current: ParseResult<'a, T>,
+}
+
+impl<'a, T> Alt<'a, T> {
+    fn next<Next>(self, next: Next) -> Alt<'a, T>
+    where
+        Next: FnOnce(usize) -> ParseResult<'a, T>,
+    {
+        Alt {
+            init_pos: self.init_pos,
+            current: next(self.init_pos),
+        }
+    }
+
+
+    pub fn or<Next>(self, next: Next) -> Alt<'a, T>
+    where
+        Next: FnOnce(usize) -> ParseResult<'a, T>,
+    {
+        match self.current {
+            Fail(_) => self.next(next),
+            Error(ReachedEOF(_)) => self.next(next),
+            other => Alt{ init_pos: self.init_pos, current: other },
+        }
+    }
+    pub fn get(self) -> ParseResult<'a,T>{
+        self.current
+    }
+
 }
 
 impl<'a, T> Into<Result<T, ParseError<'a>>> for ParseResult<'a, T> {
