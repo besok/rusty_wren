@@ -3,6 +3,7 @@ use crate::parser::ParseError;
 use std::borrow::Borrow;
 use std::cmp::max;
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::hash::Hash;
 use ParseError::{FailedOnValidation, ReachedEOF};
 use ParseResult::{Error, Fail, Success};
@@ -28,6 +29,19 @@ impl<'a, L> ParseResult<'a, (L, Vec<L>)> {
         self.map(|(h, mut rest)| {
             rest.insert(0, h);
             rest
+        })
+    }
+}
+impl<'a, L> ParseResult<'a, (Option<L>, Vec<L>)> {
+    pub fn merge(self) -> ParseResult<'a, Vec<L>> {
+        self.map(|(h, mut rest)| {
+            match h {
+                None => rest,
+                Some(el) => {
+                    rest.insert(0, el);
+                    rest
+                }
+            }
         })
     }
 }
@@ -57,6 +71,12 @@ impl<'a, T> ParseResult<'a, T> {
         Then: FnOnce(usize) -> ParseResult<'a, Option<Rhs>>,
     {
         self.then_or_none_combine(then, |a, b| (a, b))
+    }
+    pub fn then_or_default_zip<Rhs:Default, Then>(self, then: Then) -> ParseResult<'a, (T, Rhs)>
+    where
+        Then: FnOnce(usize) -> ParseResult<'a, Rhs>,
+    {
+        self.then_or_val_zip(then, Rhs::default())
     }
 
     pub fn then_combine<Rhs, Res, Then, Combine>(
@@ -180,11 +200,11 @@ impl<'a, T> ParseResult<'a, T> {
     }
 }
 
-impl<'a, T> ParseResult<'a, T> {
+impl<'a, T:Debug> ParseResult<'a, T> {
     pub fn debug(self) -> ParseResult<'a, T> {
         match self {
             Success(v, pos) => {
-                println!("success, the pos is {}", pos);
+                println!("success, the pos is {} and the res is {:?}", pos,v);
                 Success(v, pos)
             }
             Fail(pos) => {
@@ -264,7 +284,7 @@ impl<'a, T> ParseResult<'a, T> {
         }
     }
 
-    pub fn alts(self, pos: usize) -> Alt<'a, T> {
+    pub fn or_from(self, pos: usize) -> Alt<'a, T> {
         Alt {
             init_pos: pos,
             current: self,
@@ -299,10 +319,12 @@ impl<'a, T> Alt<'a, T> {
             other => Alt{ init_pos: self.init_pos, current: other },
         }
     }
-    pub fn get(self) -> ParseResult<'a,T>{
+}
+
+impl<'a,T> Into<ParseResult<'a, T>> for Alt<'a, T>{
+    fn into(self) -> ParseResult<'a, T> {
         self.current
     }
-
 }
 
 impl<'a, T> Into<Result<T, ParseError<'a>>> for ParseResult<'a, T> {

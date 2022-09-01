@@ -1,8 +1,9 @@
 use crate::parser::ast::{
-    Arithmetic, AtomExpression, Attribute, AttributeValue, BitSign, Block, BlockOrEnum, Call,
-    ClassStatement, ClassUnit, Elvis, EmptyToken, Enumeration, Expression, Function, GetterLabel,
-    Id, ImportModule, ImportVariable, Logic, LogicOp, MulSign, Number, Params, Range,
-    RangeExpression, SetterLabel, Statement,
+    Arithmetic, AssignOp, Assignment, AssignmentNull, AtomExpression, Attribute, AttributeValue,
+    BitSign, Block, BlockOrEnum, Call, ClassBodyType, ClassDefinition, ClassStatement, ClassUnit,
+    Elvis, EmptyToken, Enumeration, Expression, For, Function, GetterLabel, Id, If, IfBranch,
+    ImportModule, ImportVariable, Logic, LogicOp, MulSign, Number, Params, Range, RangeExpression,
+    Rhs, Script, SetterLabel, Statement, Unit, While, WhileCond,
 };
 use crate::parser::lexer::Token::Class;
 use crate::parser::lexer::{CypherLexer, Token};
@@ -33,6 +34,13 @@ impl<'a> CypherParser<'a> {
         Then: FnOnce(usize) -> ParseResult<'a, T> + Copy,
     {
         then(pos).then_multi_zip(|p| then(p)).merge()
+    }
+
+    pub fn zero_or_more<T, Then>(&self, pos: usize, then: Then) -> ParseResult<'a, Vec<T>>
+    where
+        Then: FnOnce(usize) -> ParseResult<'a, T> + Copy,
+    {
+        then(pos).or_none().then_multi_zip(|p| then(p)).merge()
     }
 
     pub fn validate_eof<T>(&self, res: ParseResult<'a, T>) -> ParseResult<'a, T> {
@@ -129,8 +137,117 @@ impl<'a> CypherParser<'a> {
     }
 
     fn statement(&self, pos: usize) -> ParseResult<'a, Statement<'a>> {
-        self.expression(pos).map(Statement::Expression)
+        let ret = |p| {
+            token!(self.token(p) => Token::Return)
+                .then(|p| self.expression(p))
+                .map(Statement::Return)
+        };
+
+        self.expression(pos)
+            .map(Statement::Expression)
+            .or_from(pos)
+            .or(|p| self.assignment(p).map(Statement::Assignment))
+            .or(|p| self.assignment_null(p).map(Statement::AssignmentNull))
+            .or(|p| self.if_statement(p).map(Box::new).map(Statement::If))
+            .or(|p| self.while_statement(p).map(Box::new).map(Statement::While))
+            .or(|p| self.for_statement(p).map(Box::new).map(Statement::For))
+            .or(|p| self.block(p).map(Statement::Block))
+            .or(ret)
+            .into()
     }
+    fn file_unit(&self, pos: usize) -> ParseResult<'a, Unit<'a>> {
+        self.class_def(pos)
+            .map(Unit::Class)
+            .or_from(pos)
+            .or(|p| self.function(p).map(Unit::Fn))
+            .or(|p| self.import_module(p).map(Unit::Import))
+            .or(|p| self.statement(p).map(Unit::Statement))
+            .or(|p| self.block(p).map(Unit::Block))
+            .into()
+    }
+
+    fn script(&self, pos: usize) -> ParseResult<'a, Script<'a>> {
+        self.one_or_more(pos, |p| self.file_unit(p))
+            .map(|units| Script { units })
+    }
+
+    fn assignment(&self, pos: usize) -> ParseResult<'a, Assignment<'a>> {
+        let op = |p| {
+            token!(self.token(p) =>
+                Token::Assign => AssignOp::Assign,
+                Token::MultAssign => AssignOp::Sub,
+                Token::AddAssign => AssignOp::Add,
+                Token::DivAssign => AssignOp::Div,
+                Token::AndAssign => AssignOp::And,
+                Token::OrAssign => AssignOp::Or,
+                Token::XOrAssign => AssignOp::Xor,
+                Token::ModAssign => AssignOp::Mod,
+                Token::LShift => AssignOp::LShift,
+                Token::RShift => AssignOp::RShift,
+                Token::URShiftAssign => AssignOp::URShift,
+                Token::SubAssign => AssignOp::Mul
+            )
+        };
+
+        let tail = |p| {
+            self.expression(p)
+                .map(Rhs::Expression)
+                .or_from(p)
+                .or(|p| {
+                    self.one_or_more(p, |p| self.assignment(p)).map(|v| {
+                        if v.len() == 1 {
+                            Rhs::Assignment(v.into_iter().next().take().unwrap())
+                        } else {
+                            Rhs::Assignments(v)
+                        }
+                    })
+                })
+                .into()
+        };
+        token!(self.token(pos) => Token::Var => true)
+            .or_val(false)
+            .then_zip(|p| self.expression(p))
+            .debug()
+            .then_zip(op)
+            .then_zip(tail)
+            .map(|(((var, e), op), rhs)| Assignment {
+                var,
+                op,
+                lhs: e,
+                rhs: Box::new(rhs),
+            })
+    }
+    fn assignment_null(&self, pos: usize) -> ParseResult<'a, AssignmentNull<'a>> {
+        token!(self.token(pos) => Token::Var)
+            .then(|p| self.id(p))
+            .map(|id| AssignmentNull { id })
+    }
+
+    fn if_statement(&self, pos: usize) -> ParseResult<'a, If<'a>> {
+        let main = |p| {
+            token!(self.token(p) => Token::If)
+                .then(|p| token!(self.token(p) => Token::LParen))
+                .then(|p| self.expression(p))
+                .then_zip(|p| token!(self.token(p) => Token::RParen))
+                .take_left()
+                .then_zip(|p| self.statement(p))
+                .map(|(cond, action)| IfBranch { cond, action })
+        };
+
+        let else_ifs =
+            |p| self.zero_or_more(p, |p| token!(self.token(p) => Token::Else).then(main));
+        let else_opt = |p| {
+            token!(self.token(p) => Token::Else)
+                .then(|p| self.statement(p))
+                .or_none()
+        };
+
+        main(pos)
+            .then_zip(else_ifs)
+            .then_or_none_zip(else_opt)
+            .map(|((main, others), els)| If { main, others, els })
+    }
+
     fn block(&self, pos: usize) -> ParseResult<'a, Block<'a>> {
         let params = |p| {
             token!(self.token(p) => Token::BitOr)
@@ -252,7 +369,7 @@ impl<'a> CypherParser<'a> {
             .or(|p| self.call(p).map(AtomExpression::Call))
             .or(|p| self.range(p).map(AtomExpression::Range))
             .or(|p| self.collection_elem(p))
-            .or(|p| token!(self.token(p) => Token::Break => AtomExpression::Break),)
+            .or(|p| token!(self.token(p) => Token::Break => AtomExpression::Break))
             .or(|p| token!(self.token(p) => Token::Continue => AtomExpression::Continue))
             .or(|p| self.import_module(p).map(AtomExpression::ImportModule))
             .or(with_sub)
@@ -367,11 +484,7 @@ impl<'a> CypherParser<'a> {
             .map(|(s, e)| Arithmetic::Bit(s, Box::new(e)))
         };
 
-        mul(pos)
-            .or(add)
-            .or(range)
-            .or(shift)
-            .or(bit)
+        mul(pos).or(add).or(range).or(shift).or(bit)
     }
     fn class_statement(&self, pos: usize) -> ParseResult<'a, ClassStatement<'a>> {
         let op_getter = |p| {
@@ -441,20 +554,45 @@ impl<'a> CypherParser<'a> {
                 .map(|((id, ps), b)| ClassStatement::Constructor(id, ps, b))
         };
 
-        self.function(pos).map(ClassStatement::Fn)
-            .alts(pos)
+        self.function(pos)
+            .map(ClassStatement::Fn)
+            .or_from(pos)
             .or(op_getter)
             .or(op_setter)
             .or(setter)
             .or(subscript_get)
             .or(subscript_set)
             .or(constructor)
-            .get()
+            .into()
     }
-    // fn class_body(&self, pos: usize) -> ParseResult<'a, ClassUnit<'a>> {
-    //
-    //
-    // }
+    fn class_body(&self, pos: usize) -> ParseResult<'a, ClassUnit<'a>> {
+        let foreign = |p| token!(self.token(p) => Token::Foreign => ClassBodyType::Foreign);
+        let static_t = |p| token!(self.token(p) => Token::Static => ClassBodyType::Static);
+
+        let tpe = |p| {
+            foreign(p)
+                .then(static_t)
+                .map(|r| ClassBodyType::ForeignStatic)
+                .or_from(p)
+                .or(|p| {
+                    static_t(p)
+                        .then(foreign)
+                        .map(|r| ClassBodyType::ForeignStatic)
+                })
+                .or(static_t)
+                .or(foreign)
+                .into()
+        };
+
+        self.zero_or_more(pos, |p| self.attribute(p))
+            .then_or_default_zip(tpe)
+            .then_zip(|p| self.class_statement(p))
+            .map(|((attributes, tpe), statement)| ClassUnit {
+                attributes,
+                tpe,
+                statement,
+            })
+    }
 
     fn attribute(&self, pos: usize) -> ParseResult<'a, Attribute<'a>> {
         let prefix = |p| {
@@ -492,7 +630,7 @@ impl<'a> CypherParser<'a> {
                 .map(|((b, id), attrs)| Attribute::Group(b, id, attrs))
         };
 
-        group(pos).alts(pos).or(simple).get()
+        group(pos).or_from(pos).or(simple).into()
     }
 
     fn one_arg(&self, pos: usize) -> ParseResult<'a, Id<'a>> {
@@ -500,6 +638,58 @@ impl<'a> CypherParser<'a> {
             .then(|p| self.id(p))
             .then_zip(|p| token!(self.token(p) => Token::RParen))
             .take_left()
+    }
+    fn while_statement(&self, pos: usize) -> ParseResult<'a, While<'a>> {
+        let cond = |p| {
+            self.expression(p)
+                .map(WhileCond::Expression)
+                .or(|p| self.assignment(p).map(WhileCond::Assignment))
+        };
+
+        token!(self.token(pos) => Token::While)
+            .then(|p| token!(self.token(p) => Token::LParen))
+            .then(cond)
+            .then_zip(|p| token!(self.token(p) => Token::RParen))
+            .take_left()
+            .then_zip(|p| self.statement(p))
+            .map(|(cond, body)| While { cond, body })
+    }
+    fn for_statement(&self, pos: usize) -> ParseResult<'a, For<'a>> {
+        token!(self.token(pos) => Token::For)
+            .then(|p| token!(self.token(p) => Token::LParen))
+            .then(|p| self.id(p))
+            .then_zip(|p| token!(self.token(p) => Token::In))
+            .take_left()
+            .then_zip(|p| self.expression(p))
+            .then_zip(|p| token!(self.token(p) => Token::RParen))
+            .take_left()
+            .then_zip(|p| self.statement(p))
+            .map(|((elem, collection), body)| For {
+                elem,
+                collection,
+                body,
+            })
+    }
+
+    fn class_def(&self, pos: usize) -> ParseResult<'a, ClassDefinition<'a>> {
+        let inherit = |p| token!(self.token(p) => Token::Is).then(|p| self.id(p));
+
+        self.zero_or_more(pos, |p| self.attribute(p))
+            .then_zip(|p| token!(self.token(p) => Token::Foreign => true).or_val(false))
+            .then_zip(|p| token!(self.token(p) => Token::Class))
+            .take_left()
+            .then_zip(|p| self.id(p))
+            .then_or_none_zip(|p| inherit(p).or_none())
+            .then_zip(|p| token!(self.token(p) => Token::LBrace))
+            .take_left()
+            .then_zip(|p| self.zero_or_more(p, |p| self.class_body(p)))
+            .map(|((((attrs, f), name), inherit), elems)| ClassDefinition {
+                attributes: attrs,
+                foreign: f,
+                name,
+                inherit,
+                elems,
+            })
     }
 }
 
@@ -528,8 +718,39 @@ mod tests {
         expect_pos(parser("!= >>").logic_atom(0), 2);
     }
     #[test]
+    fn class_unit_test() {
+        expect_pos(
+            parser("#id #x (y = true) static foreign x()").class_body(0),
+            14,
+        );
+    }
+    #[test]
+    fn if_test() {
+        expect_pos(parser("if(>>) >> ").if_statement(0), 5);
+        expect_pos(
+            parser("if(>>) >> else if(>>) >> else if(>>) >>").if_statement(0),
+            17,
+        );
+        expect_pos(
+            parser("if(>>) >> else if(>>) >> else if(>>) >> else >>").if_statement(0),
+            19,
+        );
+    }
+    #[test]
+    fn assignment_test() {
+        expect_pos(parser(">> = >>").assignment(0), 3);
+        expect_pos(parser("var >> = >>").assignment(0), 4);
+        expect_pos(parser("var >> = var >> = >>").assignment(0), 7);
+    }
+    #[test]
     fn attrs_test() {
         expect_pos(parser("# id").attribute(0), 2);
+        expect_pos(parser("# id = 1").attribute(0), 4);
+        expect_pos(parser("#!id = 1").attribute(0), 5);
+        expect_pos(parser("# !id").attribute(0), 3);
+        expect_pos(parser("#id(x = y)").attribute(0), 7);
+        expect_pos(parser("#!id(x = y)").attribute(0), 8);
+        expect_pos(parser("#!id(x = y, z = f)").attribute(0), 12);
     }
     #[test]
     fn arith_test() {
