@@ -69,7 +69,18 @@ impl<'a> Enumeration<'a> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression<'a> {
     Atom(AtomExpression<'a>),
-    E,
+    Compound(Box<Expression<'a>>,Box<CompoundExpression<'a>>),
+    Not(Box<Expression<'a>>),
+    E
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompoundExpression<'a>{
+    Logic(Logic<'a>),
+    Arith(Arithmetic<'a>),
+    Tail(Call<'a>),
+    Is(Box<Expression<'a>>),
+    Elvis(Elvis<'a>)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -334,7 +345,7 @@ pub struct For<'a> {
     pub collection: Expression<'a>,
     pub body: Statement<'a>,
 }
-
+#[derive(Debug, Clone, PartialEq)]
 pub enum Unit<'a> {
     Class(ClassDefinition<'a>),
     Fn(Function<'a>),
@@ -342,7 +353,7 @@ pub enum Unit<'a> {
     Statement(Statement<'a>),
     Block(Block<'a>),
 }
-
+#[derive(Debug, Clone, PartialEq)]
 pub struct Script<'a> {
     pub units: Vec<Unit<'a>>,
 }

@@ -5,6 +5,9 @@ mod ast;
 mod lexer;
 mod result;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Clone)]
 pub enum ParseError<'a> {
     BadToken(&'a str, Range<usize>),

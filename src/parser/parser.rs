@@ -1,10 +1,4 @@
-use crate::parser::ast::{
-    Arithmetic, AssignOp, Assignment, AssignmentNull, AtomExpression, Attribute, AttributeValue,
-    BitSign, Block, BlockOrEnum, Call, ClassBodyType, ClassDefinition, ClassStatement, ClassUnit,
-    Elvis, EmptyToken, Enumeration, Expression, For, Function, GetterLabel, Id, If, IfBranch,
-    ImportModule, ImportVariable, Logic, LogicOp, MulSign, Number, Params, Range, RangeExpression,
-    Rhs, Script, SetterLabel, Statement, Unit, While, WhileCond,
-};
+use crate::parser::ast::*;
 use crate::parser::lexer::Token::Class;
 use crate::parser::lexer::{CypherLexer, Token};
 use crate::parser::result::ParseResult;
@@ -16,7 +10,7 @@ use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::iter::Map;
 
-struct CypherParser<'a> {
+pub struct CypherParser<'a> {
     lexer: CypherLexer<'a>,
 }
 
@@ -50,43 +44,42 @@ impl<'a> CypherParser<'a> {
         }
     }
 }
-
 impl<'a> CypherParser<'a> {
-    fn id(&self, pos: usize) -> ParseResult<'a, Id<'a>> {
+    pub fn id(&self, pos: usize) -> ParseResult<'a, Id<'a>> {
         token!(self.token(pos) =>
             Token::Id(value) => Id{value}
         )
     }
-    fn number(&self, pos: usize) -> ParseResult<'a, Number> {
+    pub fn number(&self, pos: usize) -> ParseResult<'a, Number> {
         token!(self.token(pos) =>
             Token::Digit(number) => *number
         )
     }
-    fn null(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
+    pub fn null(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
         token!(self.token(pos) => Token::Null => AtomExpression::Null)
     }
-    fn bool(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
+    pub fn bool(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
         token!(self.token(pos) =>
             Token::True => AtomExpression::Bool(true),
             Token::False => AtomExpression::Bool(false)
         )
     }
-    fn char(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
+    pub fn char(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
         token!(self.token(pos) =>
             Token::CharLit(v) => AtomExpression::CharLit(v)
         )
     }
-    fn string(&self, pos: usize) -> ParseResult<'a, &'a str> {
+    pub fn string(&self, pos: usize) -> ParseResult<'a, &'a str> {
         token!(self.token(pos) =>
             Token::StringLit(v) => *v,
             Token::TextBlock(v) => *v
         )
     }
-    fn number_expr(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
+    pub fn number_expr(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
         self.number(pos).map(AtomExpression::Number)
     }
 
-    fn map_init(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
+    pub fn map_init(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
         let one_pair = |p| {
             self.expression(p)
                 .then_zip(|p| token!(self.token(p) => Token::Colon))
@@ -107,14 +100,14 @@ impl<'a> CypherParser<'a> {
             .take_left()
             .map(AtomExpression::MapInit)
     }
-    fn list_init(&self, pos: usize) -> ParseResult<'a, Enumeration<'a>> {
+    pub fn list_init(&self, pos: usize) -> ParseResult<'a, Enumeration<'a>> {
         token!(self.token(pos) => Token::LBrack)
             .then_or_default(|p| self.enumeration(p))
             .then_zip(|p| token!(self.token(p) => Token::RBrack))
             .take_left()
     }
 
-    fn elvis(&self, pos: usize) -> ParseResult<'a, Elvis<'a>> {
+    pub fn elvis(&self, pos: usize) -> ParseResult<'a, Elvis<'a>> {
         token!(self.token(pos) => Token::Question)
             .then(|p| self.expression(p))
             .then_zip(|p| token!(self.token(p) => Token::Colon))
@@ -123,11 +116,33 @@ impl<'a> CypherParser<'a> {
             .map(|(lhs, rhs)| Elvis { lhs, rhs })
     }
 
-    fn expression(&self, pos: usize) -> ParseResult<'a, Expression<'a>> {
-        token!(self.token(pos) =>Token::RShift => Expression::E)
+    pub fn expression(&self, pos: usize) -> ParseResult<'a, Expression<'a>> {
+        let not = |p| {
+            token!(self.token(p) => Token::Bang)
+                .then(|p| self.expression(p))
+                .map(Box::new)
+                .map(Expression::Not)
+        };
+        let wrapped = |p| {
+            token!(self.token(p) => Token::LParen)
+                .then(|p| self.expression(p))
+                .then_zip(|p| token!(self.token(p) => Token::RParen))
+                .take_left()
+        };
+
+        let atom = |p| self.atom(p).map(Expression::Atom);
+
+        let compound = |p| {
+            let atom_or_not: ParseResult<Expression> = atom(p).or_pos(p).or(not).into();
+            atom_or_not
+                .then_zip(|p| self.compound_expr(p))
+                .map(|(e, ce)| Expression::Compound(Box::new(e), Box::new(ce)))
+        };
+
+        compound(pos).or_pos(pos).or(wrapped).or(atom).into()
     }
 
-    fn enumeration(&self, pos: usize) -> ParseResult<'a, Enumeration<'a>> {
+    pub fn enumeration(&self, pos: usize) -> ParseResult<'a, Enumeration<'a>> {
         let tail = |p| token!(self.token(p) => Token::Comma).then(|p| self.expression(p));
 
         self.expression(pos)
@@ -136,7 +151,7 @@ impl<'a> CypherParser<'a> {
             .map(Enumeration::new)
     }
 
-    fn statement(&self, pos: usize) -> ParseResult<'a, Statement<'a>> {
+    pub fn statement(&self, pos: usize) -> ParseResult<'a, Statement<'a>> {
         let ret = |p| {
             token!(self.token(p) => Token::Return)
                 .then(|p| self.expression(p))
@@ -145,7 +160,7 @@ impl<'a> CypherParser<'a> {
 
         self.expression(pos)
             .map(Statement::Expression)
-            .or_from(pos)
+            .or_pos(pos)
             .or(|p| self.assignment(p).map(Statement::Assignment))
             .or(|p| self.assignment_null(p).map(Statement::AssignmentNull))
             .or(|p| self.if_statement(p).map(Box::new).map(Statement::If))
@@ -155,10 +170,10 @@ impl<'a> CypherParser<'a> {
             .or(ret)
             .into()
     }
-    fn file_unit(&self, pos: usize) -> ParseResult<'a, Unit<'a>> {
+    pub fn file_unit(&self, pos: usize) -> ParseResult<'a, Unit<'a>> {
         self.class_def(pos)
             .map(Unit::Class)
-            .or_from(pos)
+            .or_pos(pos)
             .or(|p| self.function(p).map(Unit::Fn))
             .or(|p| self.import_module(p).map(Unit::Import))
             .or(|p| self.statement(p).map(Unit::Statement))
@@ -166,12 +181,12 @@ impl<'a> CypherParser<'a> {
             .into()
     }
 
-    fn script(&self, pos: usize) -> ParseResult<'a, Script<'a>> {
+    pub fn script(&self, pos: usize) -> ParseResult<'a, Script<'a>> {
         self.one_or_more(pos, |p| self.file_unit(p))
             .map(|units| Script { units })
     }
 
-    fn assignment(&self, pos: usize) -> ParseResult<'a, Assignment<'a>> {
+    pub fn assignment(&self, pos: usize) -> ParseResult<'a, Assignment<'a>> {
         let op = |p| {
             token!(self.token(p) =>
                 Token::Assign => AssignOp::Assign,
@@ -192,7 +207,7 @@ impl<'a> CypherParser<'a> {
         let tail = |p| {
             self.expression(p)
                 .map(Rhs::Expression)
-                .or_from(p)
+                .or_pos(p)
                 .or(|p| {
                     self.one_or_more(p, |p| self.assignment(p)).map(|v| {
                         if v.len() == 1 {
@@ -217,13 +232,13 @@ impl<'a> CypherParser<'a> {
                 rhs: Box::new(rhs),
             })
     }
-    fn assignment_null(&self, pos: usize) -> ParseResult<'a, AssignmentNull<'a>> {
+    pub fn assignment_null(&self, pos: usize) -> ParseResult<'a, AssignmentNull<'a>> {
         token!(self.token(pos) => Token::Var)
             .then(|p| self.id(p))
             .map(|id| AssignmentNull { id })
     }
 
-    fn if_statement(&self, pos: usize) -> ParseResult<'a, If<'a>> {
+    pub fn if_statement(&self, pos: usize) -> ParseResult<'a, If<'a>> {
         let main = |p| {
             token!(self.token(p) => Token::If)
                 .then(|p| token!(self.token(p) => Token::LParen))
@@ -248,7 +263,7 @@ impl<'a> CypherParser<'a> {
             .map(|((main, others), els)| If { main, others, els })
     }
 
-    fn block(&self, pos: usize) -> ParseResult<'a, Block<'a>> {
+    pub fn block(&self, pos: usize) -> ParseResult<'a, Block<'a>> {
         let params = |p| {
             token!(self.token(p) => Token::BitOr)
                 .then(|p| self.params(p))
@@ -263,14 +278,14 @@ impl<'a> CypherParser<'a> {
             .then_zip(|p| token!(self.token(p) => Token::RBrace))
             .take_left()
     }
-    fn params(&self, pos: usize) -> ParseResult<'a, Params<'a>> {
+    pub fn params(&self, pos: usize) -> ParseResult<'a, Params<'a>> {
         self.id(pos)
             .then_multi_zip(|p| token!(self.token(p) => Token::Comma).then(|p| self.id(p)))
             .merge()
             .map(|ids| Params { ids })
     }
 
-    fn call(&self, pos: usize) -> ParseResult<'a, Call<'a>> {
+    pub fn call(&self, pos: usize) -> ParseResult<'a, Call<'a>> {
         let enumeration = |p| {
             token!(self.token(p) => Token::LParen)
                 .then_or_default(|p| self.enumeration(p))
@@ -279,7 +294,7 @@ impl<'a> CypherParser<'a> {
                 .map(BlockOrEnum::Enum)
         };
 
-        let block_or_enum = |p| self.block(p).map(BlockOrEnum::Block).or(enumeration);
+        let block_or_enum = |p| self.block(p).map(BlockOrEnum::Block).or_last(enumeration);
 
         let tail = |p| {
             token!(self.token(p) => Token::Dot)
@@ -297,22 +312,22 @@ impl<'a> CypherParser<'a> {
             })
     }
 
-    fn collection_elem(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
+    pub fn collection_elem(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
         self.string(pos)
             .map(Call::just_id)
-            .or(|p| self.call(p))
+            .or_last(|p| self.call(p))
             .then_zip(|p| self.list_init(p))
             .map(|(call, enumeration)| AtomExpression::CollectionElem(call, enumeration))
     }
 
-    fn import_variable(&self, pos: usize) -> ParseResult<'a, ImportVariable<'a>> {
+    pub fn import_variable(&self, pos: usize) -> ParseResult<'a, ImportVariable<'a>> {
         let alias = |p| token!(self.token(p) => Token::As).then_or_none(|p| self.id(p).or_none());
 
         self.id(pos)
             .then_or_none_zip(alias)
             .map(|(name, alias)| ImportVariable { name, alias })
     }
-    fn import_module(&self, pos: usize) -> ParseResult<'a, ImportModule<'a>> {
+    pub fn import_module(&self, pos: usize) -> ParseResult<'a, ImportModule<'a>> {
         let import_vars = |p| {
             token!(self.token(p) => Token::For)
                 .then(|p| self.import_variable(p))
@@ -328,11 +343,11 @@ impl<'a> CypherParser<'a> {
             .map(|(name, variables)| ImportModule { name, variables })
     }
 
-    fn range(&self, pos: usize) -> ParseResult<'a, Range<'a>> {
+    pub fn range(&self, pos: usize) -> ParseResult<'a, Range<'a>> {
         let range_expr = |p| {
             self.call(p)
                 .map(RangeExpression::Call)
-                .or(|p| self.number(p).map(RangeExpression::Num))
+                .or_last(|p| self.number(p).map(RangeExpression::Num))
         };
         let ellipsis = |p| {
             token!(self.token(p) =>
@@ -352,7 +367,7 @@ impl<'a> CypherParser<'a> {
             .map(to_range)
     }
 
-    fn atom(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
+    pub fn atom(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
         let with_sub = |p| {
             token!(self.token(p) => Token::Sub)
                 .then(|p| self.atom(p))
@@ -360,22 +375,22 @@ impl<'a> CypherParser<'a> {
                 .map(AtomExpression::Sub)
         };
         self.bool(pos)
-            .or(|p| self.char(p))
-            .or(|p| self.string(p).map(AtomExpression::StringLit))
-            .or(|p| self.number(p).map(AtomExpression::Number))
-            .or(|p| self.null(p))
-            .or(|p| self.list_init(p).map(AtomExpression::ListInit))
-            .or(|p| self.map_init(p))
-            .or(|p| self.call(p).map(AtomExpression::Call))
-            .or(|p| self.range(p).map(AtomExpression::Range))
-            .or(|p| self.collection_elem(p))
-            .or(|p| token!(self.token(p) => Token::Break => AtomExpression::Break))
-            .or(|p| token!(self.token(p) => Token::Continue => AtomExpression::Continue))
-            .or(|p| self.import_module(p).map(AtomExpression::ImportModule))
-            .or(with_sub)
+            .or_last(|p| self.char(p))
+            .or_last(|p| self.string(p).map(AtomExpression::StringLit))
+            .or_last(|p| self.number(p).map(AtomExpression::Number))
+            .or_last(|p| self.null(p))
+            .or_last(|p| self.list_init(p).map(AtomExpression::ListInit))
+            .or_last(|p| self.map_init(p))
+            .or_last(|p| self.call(p).map(AtomExpression::Call))
+            .or_last(|p| self.range(p).map(AtomExpression::Range))
+            .or_last(|p| self.collection_elem(p))
+            .or_last(|p| token!(self.token(p) => Token::Break => AtomExpression::Break))
+            .or_last(|p| token!(self.token(p) => Token::Continue => AtomExpression::Continue))
+            .or_last(|p| self.import_module(p).map(AtomExpression::ImportModule))
+            .or_last(with_sub)
     }
 
-    fn function(&self, pos: usize) -> ParseResult<'a, Function<'a>> {
+    pub fn function(&self, pos: usize) -> ParseResult<'a, Function<'a>> {
         let params = |p| {
             token!(self.token(p) => Token::LParen)
                 .then_or_default(|p| self.params(p))
@@ -394,7 +409,7 @@ impl<'a> CypherParser<'a> {
             .map(to_fn)
     }
 
-    fn logic_atom(&self, pos: usize) -> ParseResult<'a, Logic<'a>> {
+    pub fn logic_atom(&self, pos: usize) -> ParseResult<'a, Logic<'a>> {
         token!(self.token(pos) =>
             Token::Or => LogicOp::Or,
             Token::Gt => LogicOp::Gt,
@@ -408,7 +423,34 @@ impl<'a> CypherParser<'a> {
         .then_zip(|p| self.expression(p))
         .map(|(op, value)| Logic::Atom(op, value))
     }
-    fn logic(&self, pos: usize) -> ParseResult<'a, Logic<'a>> {
+
+    pub fn compound_expr(&self, pos: usize) -> ParseResult<'a, CompoundExpression<'a>> {
+        let tail = |p| {
+            token!(self.token(p) => Token::Dot)
+                .then(|p| self.call(p))
+                .map(CompoundExpression::Tail)
+        };
+
+        let is = |p| {
+            token!(self.token(p) => Token::Is)
+                .then(|p| self.expression(p))
+                .map(Box::new)
+                .map(CompoundExpression::Is)
+        };
+        let logic = self.logic(pos).map(CompoundExpression::Logic);
+        let arithmetic = |p| self.arith(p).map(CompoundExpression::Arith);
+        let elvis = |p| self.elvis(p).map(CompoundExpression::Elvis);
+
+        logic
+            .or_pos(pos)
+            .or(arithmetic)
+            .or(elvis)
+            .or(tail)
+            .or(is)
+            .into()
+    }
+
+    pub fn logic(&self, pos: usize) -> ParseResult<'a, Logic<'a>> {
         let and = |p| {
             self.logic_atom(p)
                 .then_multi_zip(|p| {
@@ -440,7 +482,7 @@ impl<'a> CypherParser<'a> {
                 }
             })
     }
-    fn arith(&self, pos: usize) -> ParseResult<'a, Arithmetic<'a>> {
+    pub fn arith(&self, pos: usize) -> ParseResult<'a, Arithmetic<'a>> {
         let mul = |p| {
             token!(self.token(p) =>
                         Token::Mult => MulSign::Mul,
@@ -455,7 +497,7 @@ impl<'a> CypherParser<'a> {
                         Token::Sub => false,
                         Token::Add => true
             )
-            .then_zip(|p| mul(p).or(|p| self.expression(p).map(Arithmetic::Expression)))
+            .then_zip(|p| mul(p).or_last(|p| self.expression(p).map(Arithmetic::Expression)))
             .map(|(s, e)| Arithmetic::Add(s, Box::new(e)))
         };
         let range = |p| {
@@ -463,7 +505,7 @@ impl<'a> CypherParser<'a> {
                         Token::EllipsisIn => false,
                         Token::EllipsisOut => true
             )
-            .then_zip(|p| add(p).or(|p| self.expression(p).map(Arithmetic::Expression)))
+            .then_zip(|p| add(p).or_last(|p| self.expression(p).map(Arithmetic::Expression)))
             .map(|(s, e)| Arithmetic::Range(s, Box::new(e)))
         };
         let shift = |p| {
@@ -471,7 +513,7 @@ impl<'a> CypherParser<'a> {
                         Token::LShift => false,
                         Token::RShift => true
             )
-            .then_zip(|p| range(p).or(|p| self.expression(p).map(Arithmetic::Expression)))
+            .then_zip(|p| range(p).or_last(|p| self.expression(p).map(Arithmetic::Expression)))
             .map(|(s, e)| Arithmetic::Shift(s, Box::new(e)))
         };
         let bit = |p| {
@@ -480,19 +522,23 @@ impl<'a> CypherParser<'a> {
                         Token::BitAnd => BitSign::And,
                         Token::Caret => BitSign::Xor
             )
-            .then_zip(|p| shift(p).or(|p| self.expression(p).map(Arithmetic::Expression)))
+            .then_zip(|p| shift(p).or_last(|p| self.expression(p).map(Arithmetic::Expression)))
             .map(|(s, e)| Arithmetic::Bit(s, Box::new(e)))
         };
 
-        mul(pos).or(add).or(range).or(shift).or(bit)
+        mul(pos)
+            .or_last(add)
+            .or_last(range)
+            .or_last(shift)
+            .or_last(bit)
     }
-    fn class_statement(&self, pos: usize) -> ParseResult<'a, ClassStatement<'a>> {
+    pub fn class_statement(&self, pos: usize) -> ParseResult<'a, ClassStatement<'a>> {
         let op_getter = |p| {
             token!(self.token(p) =>
                 Token::Sub => GetterLabel::Sub,
                 Token::Tilde => GetterLabel::Tilde,
                 Token::Bang => GetterLabel::Bang)
-            .or(|p| self.id(p).map(GetterLabel::Id))
+            .or_last(|p| self.id(p).map(GetterLabel::Id))
             .then_or_none_zip(|p| self.block(p).or_none())
             .map(|(g, b)| ClassStatement::OpGetter(g, b))
         };
@@ -556,7 +602,7 @@ impl<'a> CypherParser<'a> {
 
         self.function(pos)
             .map(ClassStatement::Fn)
-            .or_from(pos)
+            .or_pos(pos)
             .or(op_getter)
             .or(op_setter)
             .or(setter)
@@ -565,7 +611,7 @@ impl<'a> CypherParser<'a> {
             .or(constructor)
             .into()
     }
-    fn class_body(&self, pos: usize) -> ParseResult<'a, ClassUnit<'a>> {
+    pub fn class_body(&self, pos: usize) -> ParseResult<'a, ClassUnit<'a>> {
         let foreign = |p| token!(self.token(p) => Token::Foreign => ClassBodyType::Foreign);
         let static_t = |p| token!(self.token(p) => Token::Static => ClassBodyType::Static);
 
@@ -573,7 +619,7 @@ impl<'a> CypherParser<'a> {
             foreign(p)
                 .then(static_t)
                 .map(|r| ClassBodyType::ForeignStatic)
-                .or_from(p)
+                .or_pos(p)
                 .or(|p| {
                     static_t(p)
                         .then(foreign)
@@ -594,7 +640,7 @@ impl<'a> CypherParser<'a> {
             })
     }
 
-    fn attribute(&self, pos: usize) -> ParseResult<'a, Attribute<'a>> {
+    pub fn attribute(&self, pos: usize) -> ParseResult<'a, Attribute<'a>> {
         let prefix = |p| {
             token!(self.token(p) => Token::Hash)
                 .then_or_val(|p| token!(self.token(p) => Token::Bang => true), false)
@@ -630,20 +676,20 @@ impl<'a> CypherParser<'a> {
                 .map(|((b, id), attrs)| Attribute::Group(b, id, attrs))
         };
 
-        group(pos).or_from(pos).or(simple).into()
+        group(pos).or_pos(pos).or(simple).into()
     }
 
-    fn one_arg(&self, pos: usize) -> ParseResult<'a, Id<'a>> {
+    pub fn one_arg(&self, pos: usize) -> ParseResult<'a, Id<'a>> {
         token!(self.token(pos) => Token::LParen)
             .then(|p| self.id(p))
             .then_zip(|p| token!(self.token(p) => Token::RParen))
             .take_left()
     }
-    fn while_statement(&self, pos: usize) -> ParseResult<'a, While<'a>> {
+    pub fn while_statement(&self, pos: usize) -> ParseResult<'a, While<'a>> {
         let cond = |p| {
             self.expression(p)
                 .map(WhileCond::Expression)
-                .or(|p| self.assignment(p).map(WhileCond::Assignment))
+                .or_last(|p| self.assignment(p).map(WhileCond::Assignment))
         };
 
         token!(self.token(pos) => Token::While)
@@ -654,7 +700,7 @@ impl<'a> CypherParser<'a> {
             .then_zip(|p| self.statement(p))
             .map(|(cond, body)| While { cond, body })
     }
-    fn for_statement(&self, pos: usize) -> ParseResult<'a, For<'a>> {
+    pub fn for_statement(&self, pos: usize) -> ParseResult<'a, For<'a>> {
         token!(self.token(pos) => Token::For)
             .then(|p| token!(self.token(p) => Token::LParen))
             .then(|p| self.id(p))
@@ -671,7 +717,7 @@ impl<'a> CypherParser<'a> {
             })
     }
 
-    fn class_def(&self, pos: usize) -> ParseResult<'a, ClassDefinition<'a>> {
+    pub fn class_def(&self, pos: usize) -> ParseResult<'a, ClassDefinition<'a>> {
         let inherit = |p| token!(self.token(p) => Token::Is).then(|p| self.id(p));
 
         self.zero_or_more(pos, |p| self.attribute(p))
@@ -690,209 +736,5 @@ impl<'a> CypherParser<'a> {
                 inherit,
                 elems,
             })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::parser::ast::{AtomExpression, Enumeration, Expression};
-    use crate::parser::parser::CypherParser;
-    use crate::parser::result::ParseResult;
-    use crate::parser::ParseError;
-    use std::collections::HashMap;
-    use std::fmt::Debug;
-
-    #[test]
-    fn null_test() {
-        expect(parser("null").null(0), AtomExpression::Null);
-        fail(parser("not_null").null(0));
-
-        expect_pos(parser("? >> : >>").elvis(0), 4);
-    }
-    #[test]
-    fn atom_logic_test() {
-        expect_pos(parser("|| >>").logic_atom(0), 2);
-        expect_pos(parser("&& >>").logic_atom(0), 2);
-        expect_pos(parser("< >>").logic_atom(0), 2);
-        expect_pos(parser("== >>").logic_atom(0), 2);
-        expect_pos(parser("!= >>").logic_atom(0), 2);
-    }
-    #[test]
-    fn class_unit_test() {
-        expect_pos(
-            parser("#id #x (y = true) static foreign x()").class_body(0),
-            14,
-        );
-    }
-    #[test]
-    fn if_test() {
-        expect_pos(parser("if(>>) >> ").if_statement(0), 5);
-        expect_pos(
-            parser("if(>>) >> else if(>>) >> else if(>>) >>").if_statement(0),
-            17,
-        );
-        expect_pos(
-            parser("if(>>) >> else if(>>) >> else if(>>) >> else >>").if_statement(0),
-            19,
-        );
-    }
-    #[test]
-    fn assignment_test() {
-        expect_pos(parser(">> = >>").assignment(0), 3);
-        expect_pos(parser("var >> = >>").assignment(0), 4);
-        expect_pos(parser("var >> = var >> = >>").assignment(0), 7);
-    }
-    #[test]
-    fn attrs_test() {
-        expect_pos(parser("# id").attribute(0), 2);
-        expect_pos(parser("# id = 1").attribute(0), 4);
-        expect_pos(parser("#!id = 1").attribute(0), 5);
-        expect_pos(parser("# !id").attribute(0), 3);
-        expect_pos(parser("#id(x = y)").attribute(0), 7);
-        expect_pos(parser("#!id(x = y)").attribute(0), 8);
-        expect_pos(parser("#!id(x = y, z = f)").attribute(0), 12);
-    }
-    #[test]
-    fn arith_test() {
-        expect_pos(parser("* >>").arith(0), 2);
-        expect_pos(parser("/ >>").arith(0), 2);
-        expect_pos(parser("+ >>").arith(0), 2);
-        expect_pos(parser(".. >>").arith(0), 2);
-        expect_pos(parser(">> >>").arith(0), 2);
-        // expect_pos(parser("| >>").arith(0), 2);
-        expect_pos(parser("- * >>").arith(0), 3);
-    }
-    #[test]
-    fn logic_test() {
-        expect_pos(parser("> >> ").logic(0), 2);
-        expect_pos(parser("> >> && >> > >>").logic(0), 6);
-        expect_pos(parser("> >> || >> > >> && >> > >>").logic(0), 10);
-        expect_pos(parser("> >> || >> && >>").logic(0), 6);
-        expect_pos(parser("|| >> && >> && >>").logic(0), 6);
-    }
-
-    #[test]
-    fn range_test() {
-        expect_pos(parser("1..2").range(0), 3);
-        expect_pos(parser("1...2").range(0), 3);
-        expect_pos(parser("a.b.c...a{}").range(0), 9);
-    }
-    #[test]
-    fn atom_test() {
-        expect_pos(parser("a.b.c").atom(0), 5);
-        expect_pos(parser("-a.b.c").atom(0), 6);
-    }
-    #[test]
-    fn enum_test() {
-        expect_pos(parser(">>").enumeration(0), 1);
-        expect_pos(parser(">>, >>").enumeration(0), 3);
-    }
-    #[test]
-    fn import_mod_test() {
-        expect_pos(parser("a as b").import_variable(0), 3);
-        expect_pos(parser("import \"abc\" ").import_module(0), 2);
-        expect_pos(
-            parser("import \"abc\" for a as b, b as d").import_module(0),
-            10,
-        );
-    }
-
-    #[test]
-    fn call_test() {
-        expect_pos(parser("id.id.id").call(0), 5);
-        expect_pos(parser("id").call(0), 1);
-        expect_pos(parser("id()").call(0), 3);
-        expect_pos(parser("id().id").call(0), 5);
-        expect_pos(parser("id(>>).id").call(0), 6);
-        expect_pos(parser("id(>>,>>).id").call(0), 8);
-        expect_pos(parser("id{}.id").call(0), 5);
-        expect_pos(parser("id{ >> }.id").call(0), 6);
-        expect_pos(parser("id{|a| >> }.id").call(0), 9);
-        expect_pos(parser("id{|a,b| >> }.id").call(0), 11);
-        expect_pos(parser("id{|a,b| >> }.id().id").call(0), 15);
-    }
-
-    #[test]
-    fn block_test() {
-        expect_pos(parser("{}").block(0), 2);
-        expect_pos(parser("{>> >>}").block(0), 4);
-        expect_pos(parser("{|a| >> >>}").block(0), 7);
-        fail_on(parser("{|| >> >>}").block(0), 1);
-    }
-
-    #[test]
-    fn map_init_test() {
-        expect_pos(parser("{}").map_init(0), 2);
-        expect_pos(parser("{>> : >>}").map_init(0), 5);
-        expect_pos(parser("{>> : >>, >> : >>}").map_init(0), 9);
-    }
-
-    #[test]
-    fn list_init_test() {
-        expect_pos(parser("[]").list_init(0), 2);
-        expect_pos(parser("[>>]").list_init(0), 3);
-        expect_pos(parser("[>> , >>]").list_init(0), 5);
-    }
-
-    fn parser(src: &str) -> CypherParser {
-        match CypherParser::new(src) {
-            Ok(p) => p,
-            Err(e) => panic!("{:?}", e),
-        }
-    }
-
-    fn success<T>(res: ParseResult<T>) {
-        match res {
-            ParseResult::Success(_, _) => {}
-            ParseResult::Fail(pos) => panic!("failed on {}", pos),
-            ParseResult::Error(e) => panic!("error: {:?}", e),
-        }
-    }
-
-    fn expect<T>(res: ParseResult<T>, expect: T)
-    where
-        T: PartialEq + Debug,
-    {
-        match res {
-            ParseResult::Success(v, _) => assert_eq!(v, expect),
-            ParseResult::Fail(pos) => panic!("failed on {}", pos),
-            ParseResult::Error(e) => panic!("error: {:?}", e),
-        }
-    }
-
-    fn expect_pos<T>(res: ParseResult<T>, expect: usize)
-    where
-        T: PartialEq + Debug,
-    {
-        match res {
-            ParseResult::Success(v, pos) => {
-                println!("{:?}", v);
-                assert_eq!(pos, expect, "actual:{:?}, expect:{:?}", pos, expect)
-            }
-            ParseResult::Fail(pos) => panic!("failed on {}", pos),
-            ParseResult::Error(e) => panic!("error: {:?}", e),
-        }
-    }
-
-    fn fail<T: Debug>(res: ParseResult<T>) {
-        match res {
-            ParseResult::Success(v, pos) => {
-                panic!(" expect to get  fail but got {:?} on pos {pos}", v)
-            }
-            ParseResult::Fail(pos) => {}
-            ParseResult::Error(e) => panic!("error: {:?}", e),
-        }
-    }
-
-    fn fail_on<T: Debug>(res: ParseResult<T>, expect: usize) {
-        match res {
-            ParseResult::Success(v, pos) => {
-                panic!(" expect to get  fail but got {:?} on pos {pos}", v)
-            }
-            ParseResult::Fail(pos) => {
-                assert_eq!(pos, expect, "actual:{:?}, expect:{:?}", pos, expect)
-            }
-            ParseResult::Error(e) => panic!("error: {:?}", e),
-        }
     }
 }
