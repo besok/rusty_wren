@@ -34,13 +34,11 @@ impl<'a, L> ParseResult<'a, (L, Vec<L>)> {
 }
 impl<'a, L> ParseResult<'a, (Option<L>, Vec<L>)> {
     pub fn merge(self) -> ParseResult<'a, Vec<L>> {
-        self.map(|(h, mut rest)| {
-            match h {
-                None => rest,
-                Some(el) => {
-                    rest.insert(0, el);
-                    rest
-                }
+        self.map(|(h, mut rest)| match h {
+            None => rest,
+            Some(el) => {
+                rest.insert(0, el);
+                rest
             }
         })
     }
@@ -72,7 +70,7 @@ impl<'a, T> ParseResult<'a, T> {
     {
         self.then_or_none_combine(then, |a, b| (a, b))
     }
-    pub fn then_or_default_zip<Rhs:Default, Then>(self, then: Then) -> ParseResult<'a, (T, Rhs)>
+    pub fn then_or_default_zip<Rhs: Default, Then>(self, then: Then) -> ParseResult<'a, (T, Rhs)>
     where
         Then: FnOnce(usize) -> ParseResult<'a, Rhs>,
     {
@@ -199,20 +197,68 @@ impl<'a, T> ParseResult<'a, T> {
         self.then_or_val(then, None)
     }
 }
-
-impl<'a, T:Debug> ParseResult<'a, T> {
+impl<'a, Rhs: Debug, Lhs: Debug> ParseResult<'a, (Lhs, Rhs)> {
+    pub fn debug1_last(self, prefix: &'a str) -> ParseResult<'a, (Lhs, Rhs)> {
+        self.debug1_show(prefix, |(_, x)| x)
+    }
+}
+impl<'a, T: Debug> ParseResult<'a, T> {
     pub fn debug(self) -> ParseResult<'a, T> {
         match self {
             Success(v, pos) => {
-                println!("success, the pos is {} and the res is {:?}", pos,v);
+                println!("debug | success, pos: {} , res: {:?}", pos, v);
                 Success(v, pos)
             }
             Fail(pos) => {
-                println!("fail, the pos is {}", pos);
+                println!("debug | fail, pos: {}", pos);
                 Fail(pos)
             }
             Error(e) => {
-                println!("error {:?}", e);
+                println!("debug | error {:?}", e);
+                Error(e)
+            }
+        }
+    }
+    pub fn debug1(self, prefix: &'a str) -> ParseResult<'a, T> {
+        match self {
+            Success(v, pos) => {
+                println!(
+                    "debug | {} success, pos: {} , res: {:?}",
+                    prefix, pos, v
+                );
+                Success(v, pos)
+            }
+            Fail(pos) => {
+                println!("debug | {} fail, pos: {}", prefix, pos);
+                Fail(pos)
+            }
+            Error(e) => {
+                println!("debug | {} error {:?}", prefix, e);
+                Error(e)
+            }
+        }
+    }
+    pub fn debug1_show<Show, To>(self, prefix: &'a str, show: Show) -> ParseResult<'a, T>
+    where
+        Show: FnOnce(&T) -> &To,
+        To: Debug,
+    {
+        match self {
+            Success(v, pos) => {
+                println!(
+                    "debug | {} success, pos: {} , res: {:?}",
+                    prefix,
+                    pos,
+                    show(v.borrow())
+                );
+                Success(v, pos)
+            }
+            Fail(pos) => {
+                println!("debug | {} fail, pos: {}", prefix, pos);
+                Fail(pos)
+            }
+            Error(e) => {
+                println!("debug | {} error {:?}", prefix, e);
                 Error(e)
             }
         }
@@ -308,7 +354,6 @@ impl<'a, T> Alt<'a, T> {
         }
     }
 
-
     pub fn or<Next>(self, next: Next) -> Alt<'a, T>
     where
         Next: FnOnce(usize) -> ParseResult<'a, T>,
@@ -316,12 +361,15 @@ impl<'a, T> Alt<'a, T> {
         match self.current {
             Fail(_) => self.next(next),
             Error(ReachedEOF(_)) => self.next(next),
-            other => Alt{ init_pos: self.init_pos, current: other },
+            other => Alt {
+                init_pos: self.init_pos,
+                current: other,
+            },
         }
     }
 }
 
-impl<'a,T> Into<ParseResult<'a, T>> for Alt<'a, T>{
+impl<'a, T> Into<ParseResult<'a, T>> for Alt<'a, T> {
     fn into(self) -> ParseResult<'a, T> {
         self.current
     }

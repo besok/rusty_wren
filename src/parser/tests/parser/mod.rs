@@ -20,7 +20,7 @@ where
     T: PartialEq + Debug,
 {
     match res {
-        ParseResult::Success(v, _) => assert_eq!(v, expect),
+        ParseResult::Success(v, _) =>assert_eq!(v, expect),
         ParseResult::Fail(pos) => panic!("failed on {}", pos),
         ParseResult::Error(e) => panic!("error: {:?}", e),
     }

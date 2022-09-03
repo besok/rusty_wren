@@ -18,3 +18,11 @@ fn block_test() {
     expect_pos(parser("{|a| >> >>}").block(0), 7);
     fail_on(parser("{|| >> >>}").block(0), 1);
 }
+
+#[test]
+fn class_unit_test() {
+    expect_pos(
+        parser("#id #x (y = true) static foreign x()").class_body(0),
+        14,
+    );
+}

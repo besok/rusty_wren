@@ -133,13 +133,18 @@ impl<'a> CypherParser<'a> {
         let atom = |p| self.atom(p).map(Expression::Atom);
 
         let compound = |p| {
-            let atom_or_not: ParseResult<Expression> = atom(p).or_pos(p).or(not).into();
+            let atom_or_not: ParseResult<Expression> = atom(p).or_pos(p).or(not).or(wrapped).into();
             atom_or_not
                 .then_zip(|p| self.compound_expr(p))
                 .map(|(e, ce)| Expression::Compound(Box::new(e), Box::new(ce)))
         };
 
-        compound(pos).or_pos(pos).or(wrapped).or(atom).into()
+        compound(pos)
+            .or_pos(pos)
+            .or(not)
+            .or(wrapped)
+            .or(atom)
+            .into()
     }
 
     pub fn enumeration(&self, pos: usize) -> ParseResult<'a, Enumeration<'a>> {
@@ -157,12 +162,11 @@ impl<'a> CypherParser<'a> {
                 .then(|p| self.expression(p))
                 .map(Statement::Return)
         };
-
-        self.expression(pos)
-            .map(Statement::Expression)
+        self.assignment(pos)
+            .map(Statement::Assignment)
             .or_pos(pos)
-            .or(|p| self.assignment(p).map(Statement::Assignment))
             .or(|p| self.assignment_null(p).map(Statement::AssignmentNull))
+            .or(|p| self.expression(p).map(Statement::Expression))
             .or(|p| self.if_statement(p).map(Box::new).map(Statement::If))
             .or(|p| self.while_statement(p).map(Box::new).map(Statement::While))
             .or(|p| self.for_statement(p).map(Box::new).map(Statement::For))
@@ -249,8 +253,14 @@ impl<'a> CypherParser<'a> {
                 .map(|(cond, action)| IfBranch { cond, action })
         };
 
-        let else_ifs =
-            |p| self.zero_or_more(p, |p| token!(self.token(p) => Token::Else).then(main));
+        let else_ifs = |p| {
+            self.zero_or_more(p, |p| {
+                token!(self.token(p) => Token::Else)
+                    .debug1("else")
+                    .then(main)
+                    .debug1("main")
+            })
+        };
         let else_opt = |p| {
             token!(self.token(p) => Token::Else)
                 .then(|p| self.statement(p))
@@ -260,6 +270,7 @@ impl<'a> CypherParser<'a> {
         main(pos)
             .then_zip(else_ifs)
             .then_or_none_zip(else_opt)
+            .debug1_last("els")
             .map(|((main, others), els)| If { main, others, els })
     }
 
@@ -375,19 +386,21 @@ impl<'a> CypherParser<'a> {
                 .map(AtomExpression::Sub)
         };
         self.bool(pos)
-            .or_last(|p| self.char(p))
-            .or_last(|p| self.string(p).map(AtomExpression::StringLit))
-            .or_last(|p| self.number(p).map(AtomExpression::Number))
-            .or_last(|p| self.null(p))
-            .or_last(|p| self.list_init(p).map(AtomExpression::ListInit))
-            .or_last(|p| self.map_init(p))
-            .or_last(|p| self.call(p).map(AtomExpression::Call))
-            .or_last(|p| self.range(p).map(AtomExpression::Range))
-            .or_last(|p| self.collection_elem(p))
-            .or_last(|p| token!(self.token(p) => Token::Break => AtomExpression::Break))
-            .or_last(|p| token!(self.token(p) => Token::Continue => AtomExpression::Continue))
-            .or_last(|p| self.import_module(p).map(AtomExpression::ImportModule))
-            .or_last(with_sub)
+            .or_pos(pos)
+            .or(|p| self.import_module(p).map(AtomExpression::ImportModule))
+            .or(|p| self.range(p).map(AtomExpression::Range))
+            .or(|p| self.char(p))
+            .or(|p| self.string(p).map(AtomExpression::StringLit))
+            .or(|p| self.number(p).map(AtomExpression::Number))
+            .or(|p| self.null(p))
+            .or(|p| self.list_init(p).map(AtomExpression::ListInit))
+            .or(|p| self.map_init(p))
+            .or(|p| self.collection_elem(p))
+            .or(|p| self.call(p).map(AtomExpression::Call))
+            .or(|p| token!(self.token(p) => Token::Break => AtomExpression::Break))
+            .or(|p| token!(self.token(p) => Token::Continue => AtomExpression::Continue))
+            .or(with_sub)
+            .into()
     }
 
     pub fn function(&self, pos: usize) -> ParseResult<'a, Function<'a>> {
