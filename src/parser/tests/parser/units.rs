@@ -20,9 +20,25 @@ fn block_test() {
 }
 
 #[test]
-fn class_unit_test() {
+fn class_body_test() {
     expect_pos(
         parser("#id #x (y = true) static foreign x()").class_body(0),
         14,
     );
 }
+#[test]
+fn class_unit_test() {
+    expect_pos(
+        parser(r#"
+        foreign class Tree {
+          check {
+            if (_left == null) { return _item }
+
+            return _item + _left.check - _right.check
+            }
+        }
+        "#).class_def(0),
+        27,
+    );
+}
+

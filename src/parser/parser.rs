@@ -27,14 +27,21 @@ impl<'a> CypherParser<'a> {
     where
         Then: FnOnce(usize) -> ParseResult<'a, T> + Copy,
     {
-        then(pos).then_multi_zip(|p| then(p)).merge()
+        match self.zero_or_more(pos, then) {
+            Success(vals, _) if vals.is_empty() => Fail(pos),
+            other => other,
+        }
     }
 
     pub fn zero_or_more<T, Then>(&self, pos: usize, then: Then) -> ParseResult<'a, Vec<T>>
     where
         Then: FnOnce(usize) -> ParseResult<'a, T> + Copy,
     {
-        then(pos).or_none().then_multi_zip(|p| then(p)).merge()
+        match then(pos).then_multi_zip(|p| then(p)).merge() {
+            Fail(_) => Success(vec![], pos),
+            Error(ReachedEOF(_)) => Success(vec![], pos),
+            success => success,
+        }
     }
 
     pub fn validate_eof<T>(&self, res: ParseResult<'a, T>) -> ParseResult<'a, T> {
@@ -133,14 +140,15 @@ impl<'a> CypherParser<'a> {
         let atom = |p| self.atom(p).map(Expression::Atom);
 
         let compound = |p| {
-            let atom_or_not: ParseResult<Expression> = atom(p).or_pos(p).or(not).or(wrapped).into();
+            let atom_or_not: ParseResult<Expression> =
+                atom(p).or_from(p).or(not).or(wrapped).into();
             atom_or_not
                 .then_zip(|p| self.compound_expr(p))
                 .map(|(e, ce)| Expression::Compound(Box::new(e), Box::new(ce)))
         };
 
         compound(pos)
-            .or_pos(pos)
+            .or_from(pos)
             .or(not)
             .or(wrapped)
             .or(atom)
@@ -164,20 +172,20 @@ impl<'a> CypherParser<'a> {
         };
         self.assignment(pos)
             .map(Statement::Assignment)
-            .or_pos(pos)
+            .or_from(pos)
             .or(|p| self.assignment_null(p).map(Statement::AssignmentNull))
+            .or(|p| self.block(p).map(Statement::Block))
             .or(|p| self.expression(p).map(Statement::Expression))
             .or(|p| self.if_statement(p).map(Box::new).map(Statement::If))
             .or(|p| self.while_statement(p).map(Box::new).map(Statement::While))
             .or(|p| self.for_statement(p).map(Box::new).map(Statement::For))
-            .or(|p| self.block(p).map(Statement::Block))
             .or(ret)
             .into()
     }
     pub fn file_unit(&self, pos: usize) -> ParseResult<'a, Unit<'a>> {
         self.class_def(pos)
             .map(Unit::Class)
-            .or_pos(pos)
+            .or_from(pos)
             .or(|p| self.function(p).map(Unit::Fn))
             .or(|p| self.import_module(p).map(Unit::Import))
             .or(|p| self.statement(p).map(Unit::Statement))
@@ -211,7 +219,7 @@ impl<'a> CypherParser<'a> {
         let tail = |p| {
             self.expression(p)
                 .map(Rhs::Expression)
-                .or_pos(p)
+                .or_from(p)
                 .or(|p| {
                     self.one_or_more(p, |p| self.assignment(p)).map(|v| {
                         if v.len() == 1 {
@@ -226,7 +234,6 @@ impl<'a> CypherParser<'a> {
         token!(self.token(pos) => Token::Var => true)
             .or_val(false)
             .then_zip(|p| self.expression(p))
-            .debug()
             .then_zip(op)
             .then_zip(tail)
             .map(|(((var, e), op), rhs)| Assignment {
@@ -253,14 +260,9 @@ impl<'a> CypherParser<'a> {
                 .map(|(cond, action)| IfBranch { cond, action })
         };
 
-        let else_ifs = |p| {
-            self.zero_or_more(p, |p| {
-                token!(self.token(p) => Token::Else)
-                    .debug1("else")
-                    .then(main)
-                    .debug1("main")
-            })
-        };
+        let else_ifs =
+            |p| self.zero_or_more(p, |p| token!(self.token(p) => Token::Else).then(main));
+
         let else_opt = |p| {
             token!(self.token(p) => Token::Else)
                 .then(|p| self.statement(p))
@@ -270,7 +272,6 @@ impl<'a> CypherParser<'a> {
         main(pos)
             .then_zip(else_ifs)
             .then_or_none_zip(else_opt)
-            .debug1_last("els")
             .map(|((main, others), els)| If { main, others, els })
     }
 
@@ -386,7 +387,7 @@ impl<'a> CypherParser<'a> {
                 .map(AtomExpression::Sub)
         };
         self.bool(pos)
-            .or_pos(pos)
+            .or_from(pos)
             .or(|p| self.import_module(p).map(AtomExpression::ImportModule))
             .or(|p| self.range(p).map(AtomExpression::Range))
             .or(|p| self.char(p))
@@ -455,7 +456,7 @@ impl<'a> CypherParser<'a> {
         let elvis = |p| self.elvis(p).map(CompoundExpression::Elvis);
 
         logic
-            .or_pos(pos)
+            .or_from(pos)
             .or(arithmetic)
             .or(elvis)
             .or(tail)
@@ -615,7 +616,7 @@ impl<'a> CypherParser<'a> {
 
         self.function(pos)
             .map(ClassStatement::Fn)
-            .or_pos(pos)
+            .or_from(pos)
             .or(op_getter)
             .or(op_setter)
             .or(setter)
@@ -632,7 +633,7 @@ impl<'a> CypherParser<'a> {
             foreign(p)
                 .then(static_t)
                 .map(|r| ClassBodyType::ForeignStatic)
-                .or_pos(p)
+                .or_from(p)
                 .or(|p| {
                     static_t(p)
                         .then(foreign)
@@ -689,7 +690,7 @@ impl<'a> CypherParser<'a> {
                 .map(|((b, id), attrs)| Attribute::Group(b, id, attrs))
         };
 
-        group(pos).or_pos(pos).or(simple).into()
+        group(pos).or_from(pos).or(simple).into()
     }
 
     pub fn one_arg(&self, pos: usize) -> ParseResult<'a, Id<'a>> {
@@ -702,7 +703,9 @@ impl<'a> CypherParser<'a> {
         let cond = |p| {
             self.expression(p)
                 .map(WhileCond::Expression)
-                .or_last(|p| self.assignment(p).map(WhileCond::Assignment))
+                .or_from(p)
+                .or(|p| self.assignment(p).map(WhileCond::Assignment))
+                .into()
         };
 
         token!(self.token(pos) => Token::While)

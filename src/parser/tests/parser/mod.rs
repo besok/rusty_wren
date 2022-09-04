@@ -28,13 +28,10 @@ where
 
 fn expect_pos<T>(res: ParseResult<T>, expect: usize)
 where
-    T: PartialEq + Debug,
+    T: PartialEq,
 {
     match res {
-        ParseResult::Success(v, pos) => {
-            println!("{:?}", v);
-            assert_eq!(pos, expect)
-        }
+        ParseResult::Success(v, pos) => assert_eq!(pos, expect),
         ParseResult::Fail(pos) => panic!("failed on {}", pos),
         ParseResult::Error(e) => panic!("error: {:?}", e),
     }

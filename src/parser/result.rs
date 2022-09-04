@@ -198,26 +198,23 @@ impl<'a, T> ParseResult<'a, T> {
     }
 }
 impl<'a, Rhs: Debug, Lhs: Debug> ParseResult<'a, (Lhs, Rhs)> {
-    pub fn debug1_last(self, prefix: &'a str) -> ParseResult<'a, (Lhs, Rhs)> {
+    pub fn debug1_show_last(self, prefix: &'a str) -> ParseResult<'a, (Lhs, Rhs)> {
         self.debug1_show(prefix, |(_, x)| x)
+    }
+    pub fn debug_show_last(self) -> ParseResult<'a, (Lhs, Rhs)> {
+        self.debug_show( |(_, x)| x)
     }
 }
 impl<'a, T: Debug> ParseResult<'a, T> {
     pub fn debug(self) -> ParseResult<'a, T> {
-        match self {
-            Success(v, pos) => {
-                println!("debug | success, pos: {} , res: {:?}", pos, v);
-                Success(v, pos)
-            }
-            Fail(pos) => {
-                println!("debug | fail, pos: {}", pos);
-                Fail(pos)
-            }
-            Error(e) => {
-                println!("debug | error {:?}", e);
-                Error(e)
-            }
-        }
+       self.debug1("")
+    }
+    pub fn debug_show<Show, To>(self, show: Show) -> ParseResult<'a, T>
+        where
+            Show: FnOnce(&T) -> &To,
+            To: Debug,
+    {
+        self.debug1_show("",show)
     }
     pub fn debug1(self, prefix: &'a str) -> ParseResult<'a, T> {
         match self {
@@ -263,6 +260,8 @@ impl<'a, T: Debug> ParseResult<'a, T> {
             }
         }
     }
+
+
 }
 
 impl<'a, T> ParseResult<'a, T> {
@@ -330,7 +329,7 @@ impl<'a, T> ParseResult<'a, T> {
         }
     }
 
-    pub fn or_pos(self, pos: usize) -> Alt<'a, T> {
+    pub fn or_from(self, pos: usize) -> Alt<'a, T> {
         Alt {
             init_pos: pos,
             current: self,
