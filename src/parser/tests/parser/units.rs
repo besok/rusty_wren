@@ -20,10 +20,52 @@ fn block_test() {
 }
 
 #[test]
+fn class_statement_test() {
+
+    expect_pos(
+        parser(r#"
+       construct new(item, depth) {
+            _item = item
+             if (depth > 0) {
+                var item2 = item + item
+                depth = depth - 1
+                _left = Tree.new(item2 - 1, depth)
+                _right = Tree.new(item2, depth)
+                 }
+             }
+        "#).class_statement(0),
+        53,
+    );
+}
+
+#[test]
 fn class_body_test() {
     expect_pos(
         parser("#id #x (y = true) static foreign x()").class_body(0),
         14,
+    );
+    expect_pos(
+        parser(r#"
+        check {
+            if (_left == null) { return _item }
+            return _item + _left.check - _right.check
+            }
+        "#).class_body(0),
+        23,
+    );
+    expect_pos(
+        parser(r#"
+       construct new(item, depth) {
+            _item = item
+             if (depth > 0) {
+                var item2 = item + item
+                depth = depth - 1
+                _left = Tree.new(item2 - 1, depth)
+                _right = Tree.new(item2, depth)
+                 }
+             }
+        "#).class_body(0),
+        81,
     );
 }
 #[test]
@@ -31,6 +73,15 @@ fn class_unit_test() {
     expect_pos(
         parser(r#"
         foreign class Tree {
+          construct new(item, depth) {
+            _item = item
+             if (depth > 0) {
+                var item2 = item + item
+                depth = depth - 1
+                _left = Tree.new(item2 - 1, depth)
+                _right = Tree.new(item2, depth)
+                 }
+             }
           check {
             if (_left == null) { return _item }
 
@@ -38,7 +89,7 @@ fn class_unit_test() {
             }
         }
         "#).class_def(0),
-        27,
+        81,
     );
 }
 

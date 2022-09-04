@@ -306,7 +306,7 @@ impl<'a> CypherParser<'a> {
                 .map(BlockOrEnum::Enum)
         };
 
-        let block_or_enum = |p| self.block(p).map(BlockOrEnum::Block).or_last(enumeration);
+        let block_or_enum = |p| self.block(p).map(BlockOrEnum::Block).or(enumeration);
 
         let tail = |p| {
             token!(self.token(p) => Token::Dot)
@@ -327,7 +327,7 @@ impl<'a> CypherParser<'a> {
     pub fn collection_elem(&self, pos: usize) -> ParseResult<'a, AtomExpression<'a>> {
         self.string(pos)
             .map(Call::just_id)
-            .or_last(|p| self.call(p))
+            .or(|p| self.call(p))
             .then_zip(|p| self.list_init(p))
             .map(|(call, enumeration)| AtomExpression::CollectionElem(call, enumeration))
     }
@@ -359,7 +359,7 @@ impl<'a> CypherParser<'a> {
         let range_expr = |p| {
             self.call(p)
                 .map(RangeExpression::Call)
-                .or_last(|p| self.number(p).map(RangeExpression::Num))
+                .or(|p| self.number(p).map(RangeExpression::Num))
         };
         let ellipsis = |p| {
             token!(self.token(p) =>
@@ -511,7 +511,7 @@ impl<'a> CypherParser<'a> {
                         Token::Sub => false,
                         Token::Add => true
             )
-            .then_zip(|p| mul(p).or_last(|p| self.expression(p).map(Arithmetic::Expression)))
+            .then_zip(|p| mul(p).or(|p| self.expression(p).map(Arithmetic::Expression)))
             .map(|(s, e)| Arithmetic::Add(s, Box::new(e)))
         };
         let range = |p| {
@@ -519,7 +519,7 @@ impl<'a> CypherParser<'a> {
                         Token::EllipsisIn => false,
                         Token::EllipsisOut => true
             )
-            .then_zip(|p| add(p).or_last(|p| self.expression(p).map(Arithmetic::Expression)))
+            .then_zip(|p| add(p).or(|p| self.expression(p).map(Arithmetic::Expression)))
             .map(|(s, e)| Arithmetic::Range(s, Box::new(e)))
         };
         let shift = |p| {
@@ -527,7 +527,7 @@ impl<'a> CypherParser<'a> {
                         Token::LShift => false,
                         Token::RShift => true
             )
-            .then_zip(|p| range(p).or_last(|p| self.expression(p).map(Arithmetic::Expression)))
+            .then_zip(|p| range(p).or(|p| self.expression(p).map(Arithmetic::Expression)))
             .map(|(s, e)| Arithmetic::Shift(s, Box::new(e)))
         };
         let bit = |p| {
@@ -536,15 +536,15 @@ impl<'a> CypherParser<'a> {
                         Token::BitAnd => BitSign::And,
                         Token::Caret => BitSign::Xor
             )
-            .then_zip(|p| shift(p).or_last(|p| self.expression(p).map(Arithmetic::Expression)))
+            .then_zip(|p| shift(p).or(|p| self.expression(p).map(Arithmetic::Expression)))
             .map(|(s, e)| Arithmetic::Bit(s, Box::new(e)))
         };
 
         mul(pos)
-            .or_last(add)
-            .or_last(range)
-            .or_last(shift)
-            .or_last(bit)
+            .or(add)
+            .or(range)
+            .or(shift)
+            .or(bit)
     }
     pub fn class_statement(&self, pos: usize) -> ParseResult<'a, ClassStatement<'a>> {
         let op_getter = |p| {
@@ -552,7 +552,7 @@ impl<'a> CypherParser<'a> {
                 Token::Sub => GetterLabel::Sub,
                 Token::Tilde => GetterLabel::Tilde,
                 Token::Bang => GetterLabel::Bang)
-            .or_last(|p| self.id(p).map(GetterLabel::Id))
+            .or(|p| self.id(p).map(GetterLabel::Id))
             .then_or_none_zip(|p| self.block(p).or_none())
             .map(|(g, b)| ClassStatement::OpGetter(g, b))
         };
@@ -609,7 +609,11 @@ impl<'a> CypherParser<'a> {
         let constructor = |p| {
             token!(self.token(p) => Token::Construct)
                 .then(|p| self.id(p))
-                .then_zip(|p| self.params(p))
+                .then_zip(|p|token!(self.token(p) => Token::LParen))
+                .take_left()
+                .then_or_default_zip(|p|self.params(p))
+                .then_zip(|p|token!(self.token(p) => Token::RParen))
+                .take_left()
                 .then_zip(|p| self.block(p))
                 .map(|((id, ps), b)| ClassStatement::Constructor(id, ps, b))
         };
@@ -745,6 +749,8 @@ impl<'a> CypherParser<'a> {
             .then_zip(|p| token!(self.token(p) => Token::LBrace))
             .take_left()
             .then_zip(|p| self.zero_or_more(p, |p| self.class_body(p)))
+            .then_zip(|p| token!(self.token(p) => Token::RBrace))
+            .take_left()
             .map(|((((attrs, f), name), inherit), elems)| ClassDefinition {
                 attributes: attrs,
                 foreign: f,

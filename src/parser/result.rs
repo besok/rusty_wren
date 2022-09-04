@@ -318,7 +318,7 @@ impl<'a, T> ParseResult<'a, T> {
     pub fn or_none(self) -> ParseResult<'a, Option<T>> {
         self.map(|x| Some(x)).or_val(None)
     }
-    pub fn or_last<Alt>(self, next: Alt) -> ParseResult<'a, T>
+    pub fn or<Alt>(self, next: Alt) -> ParseResult<'a, T>
     where
         Alt: FnOnce(usize) -> ParseResult<'a, T>,
     {
